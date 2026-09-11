@@ -284,7 +284,7 @@ async function registerSubmit(e){
     authMode='login'; render(); registerBusy=false; return;
   }
   session=signData.session;
-  const {data:biz,error:bizErr}=await sb.from('businesses').insert({name:bizName, short:bizName.slice(0,3).toUpperCase()}).select().single();
+  const {data:biz,error:bizErr}=await sb.from('businesses').insert({name:bizName, short:bizName.slice(0,3).toUpperCase(), owner_auth_id:session.user.id}).select().single();
   if(bizErr){ err.textContent=bizErr.message; registerBusy=false; return; }
   const {error:memErr}=await sb.from('members').insert({business_id:biz.id, auth_user_id:session.user.id, name:ownerName, role:'owner'});
   if(memErr){ err.textContent=memErr.message; registerBusy=false; return; }
