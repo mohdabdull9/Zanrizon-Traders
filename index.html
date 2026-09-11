@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Universal Business Manager</title>
+
+<!-- ===== CONFIGURE THESE TWO VALUES AFTER YOU CREATE YOUR SUPABASE PROJECT ===== -->
+<script>
+  window.SUPABASE_URL = "window.SUPABASE_URL = "https://bejftfhswkbalnpunvrp.supabase.co";          // e.g. https://abcdefgh.supabase.co
+  window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJlamZ0Zmhzd2tiYWxucHVudnJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxNTQwODcsImV4cCI6MjEwNDczMDA4N30.uZBOiaVjKmOc5Dp7AKqYg-PGkyS2v-UNA6wdYNZqaH8"; // Project Settings → API → anon public key
+</script>
+<!-- ============================================================================= -->
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<style>
+:root{
+ --primary:#173b63;--primary2:#0f2945;--accent:#d6a84f;--bg:#f4f6f8;--card:#fff;
+ --text:#182230;--muted:#667085;--line:#e4e7ec;--ok:#18864b;--warn:#b7791f;--danger:#c53b37;
+ --r:12px;--shadow:0 6px 22px rgba(15,41,69,.08);--ok-bg:#eaf7ef;--warn-bg:#fff6e6;--danger-bg:#fff0ef;
+}
+html[data-theme="dark"]{
+ --primary:#4f8fd1;--primary2:#0b1420;--accent:#e8bd6f;--bg:#0d1520;--card:#141d2c;
+ --text:#e8eef6;--muted:#93a4bb;--line:#243247;--ok:#3fcf8e;--warn:#f0ac45;--danger:#f2716a;
+ --shadow:0 10px 30px rgba(0,0,0,.45);--ok-bg:#0f2a20;--warn-bg:#2e2410;--danger-bg:#2e1615;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px Inter,system-ui,-apple-system,Segoe UI,sans-serif;transition:background .25s ease,color .25s ease}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer}
+::selection{background:var(--accent);color:var(--primary2)}
+
+/* ---------- Login / Register ---------- */
+.login{min-height:100vh;display:grid;grid-template-columns:1.1fr .9fr;background:var(--card)}
+.loginHero{background:linear-gradient(150deg,var(--primary2),var(--primary));color:#fff;padding:70px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.loginHero::before{content:'';position:absolute;inset:0;background-image:repeating-linear-gradient(115deg,rgba(255,255,255,.04) 0 2px,transparent 2px 46px);}
+.heroIn{max-width:560px;position:relative;z-index:1;animation:fadeUp .6s ease both}
+.logo{width:62px;height:62px;border-radius:16px;background:var(--accent);color:var(--primary2);display:grid;place-items:center;font-weight:900;font-size:25px;margin-bottom:25px}
+.heroIn h1{font-size:42px;line-height:1.05;margin:0 0 14px}
+.heroIn p{color:#d9e5f2;line-height:1.7;font-size:16px}
+.features{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:28px}
+.feature{padding:14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);border-radius:10px;transition:transform .15s}
+.feature:hover{transform:translateY(-2px)}
+.loginBox{display:flex;align-items:center;justify-content:center;padding:35px}
+.panel{width:100%;max-width:400px;animation:fadeUp .5s ease both}
+.panel h2{font-size:28px;margin:0 0 7px}
+.muted{color:var(--muted)}
+.authTabs{display:flex;gap:6px;margin-bottom:22px;background:var(--bg);padding:4px;border-radius:10px}
+.authTabs button{flex:1;border:0;background:none;padding:9px;border-radius:8px;font-weight:700;color:var(--muted)}
+.authTabs button.active{background:var(--card);color:var(--primary);box-shadow:var(--shadow)}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:12px;font-weight:700;color:var(--muted)}
+.field input,.field select,.field textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px 11px;background:var(--card);color:var(--text);outline:none;transition:border-color .15s,box-shadow .15s}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(214,168,79,.15)}
+
+.btn{border:1px solid var(--line);background:var(--card);color:var(--text);padding:9px 13px;border-radius:9px;font-weight:700;transition:.15s}
+.btn:hover{border-color:var(--primary);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+.gold{background:var(--accent);color:var(--primary2);border-color:var(--accent)}
+.danger{background:var(--danger-bg);color:var(--danger);border-color:var(--danger-bg)}
+.success{background:var(--ok-bg);color:var(--ok);border-color:var(--ok-bg)}
+.small{padding:6px 9px;font-size:12px}
+.wide{width:100%}
+
+/* ---------- App shell ---------- */
+.app{display:flex;min-height:100vh}
+.side{width:245px;background:var(--primary2);color:#fff;padding:17px 13px;display:flex;flex-direction:column;flex-shrink:0;transition:width .2s}
+.brand{display:flex;align-items:center;gap:10px;padding:7px 7px 18px;border-bottom:1px solid rgba(255,255,255,.1);margin-bottom:14px}
+.brand .logo{width:40px;height:40px;border-radius:10px;font-size:15px;margin:0}
+.brand b{font-size:14px}
+.brand small{display:block;color:#b9cce0;margin-top:3px}
+.nav{display:flex;flex-direction:column;gap:3px;overflow:auto}
+.nav button{border:0;background:transparent;color:#d3dfeb;text-align:left;padding:10px 11px;border-radius:8px;display:flex;align-items:center;gap:9px;transition:background .12s,color .12s}
+.nav button:hover{background:rgba(255,255,255,.1);color:#fff}
+.nav button.active{background:var(--accent);color:var(--primary2);font-weight:800}
+.nav .badge{margin-left:auto;background:var(--danger);color:#fff;font-size:10.5px;padding:1px 7px;border-radius:20px}
+.sideBottom{margin-top:auto;border-top:1px solid rgba(255,255,255,.1);padding-top:12px;display:flex;flex-direction:column;gap:3px}
+.sideBottom button{border:0;background:none;color:#d3dfeb;padding:10px;text-align:left;border-radius:8px;display:flex;gap:9px;align-items:center}
+.sideBottom button:hover{background:rgba(255,255,255,.1);color:#fff}
+.main{flex:1;min-width:0}
+.top{height:66px;background:var(--card);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 24px;gap:15px;position:sticky;top:0;z-index:5;transition:background .25s}
+.topSearch{max-width:480px;flex:1;position:relative}
+.topSearch input{width:100%;padding:11px 14px 11px 38px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text)}
+.topSearch span{position:absolute;left:13px;top:10px;color:var(--muted)}
+.user{display:flex;align-items:center;gap:12px}
+.avatar{width:34px;height:34px;border-radius:50%;background:var(--bg);display:grid;place-items:center;font-weight:800;color:var(--primary)}
+.themeBtn{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);background:var(--bg)}
+.content{padding:24px;max-width:1600px;margin:auto;animation:fadeUp .35s ease both}
+.pageHead{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:20px;flex-wrap:wrap}
+.pageHead h1{font-size:25px;margin:0}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.grid{display:grid;gap:15px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.g6{grid-template-columns:repeat(6,minmax(0,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px;box-shadow:var(--shadow);margin-bottom:16px;transition:background .25s,border-color .25s}
+.cardHead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:15px;flex-wrap:wrap}
+.cardHead h3{margin:0;font-size:16px}
+.cardHead p{margin:4px 0 0;color:var(--muted);font-size:12px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow);transition:transform .15s}
+.kpi:hover{transform:translateY(-2px)}
+.kpi .label{font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:800;letter-spacing:.04em}
+.kpi .value{font-size:25px;font-weight:850;margin-top:8px;color:var(--primary)}
+.kpi .sub{font-size:11px;color:var(--muted);margin-top:5px}
+.ok{color:var(--ok)!important}.bad{color:var(--danger)!important}.warn{color:var(--warn)!important}
+
+.tableWrap{overflow:auto}
+table{width:100%;border-collapse:collapse;min-width:720px}
+th{font-size:11px;color:var(--muted);text-transform:uppercase;text-align:left;border-bottom:2px solid var(--line);padding:9px;white-space:nowrap}
+td{padding:10px 9px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr{transition:background .12s}
+tr:hover td{background:rgba(128,128,128,.04)}
+tr:last-child td{border-bottom:0}
+.num{font-variant-numeric:tabular-nums}
+.tag{display:inline-block;border-radius:30px;padding:4px 8px;font-size:11px;font-weight:800}
+.tag.ok{background:var(--ok-bg);color:var(--ok)}
+.tag.low{background:var(--warn-bg);color:var(--warn)}
+.tag.out{background:var(--danger-bg);color:var(--danger)}
+.formGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:13px;align-items:end}
+.formActions{display:flex;gap:8px;align-items:end}
+.searchLine{display:flex;gap:9px;align-items:center;margin-bottom:13px}
+.searchLine input{flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--text)}
+.notice{padding:12px 14px;border-radius:9px;background:var(--bg);color:var(--muted);margin-bottom:15px}
+.notice.warn{background:var(--warn-bg);color:var(--warn)}
+.empty{text-align:center;color:var(--muted);padding:35px!important;font-style:italic}
+.right{text-align:right}
+.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.chart{height:200px;display:flex;align-items:flex-end;gap:10px;padding:15px 5px 26px;border-bottom:1px solid var(--line)}
+.bar{flex:1;min-width:8px;background:var(--primary);border-radius:6px 6px 0 0;position:relative;transition:height .4s ease}
+.bar span{position:absolute;bottom:-22px;width:100%;font-size:10px;text-align:center;color:var(--muted)}
+.bar i{position:absolute;top:-17px;left:0;width:100%;font-size:10px;text-align:center;font-style:normal;color:var(--text)}
+.barcodeBox{display:flex;align-items:center;gap:15px;flex-wrap:wrap}
+.barcode-svg{background:#fff;border:1px solid var(--line);border-radius:6px;padding:4px}
+.modalBack{position:fixed;inset:0;background:rgba(10,18,30,.55);display:grid;place-items:center;padding:20px;z-index:20;animation:fadeIn .15s ease both}
+.modal{background:var(--card);border-radius:14px;width:min(720px,100%);max-height:90vh;overflow:auto;padding:20px;animation:pop .18s ease both}
+.hidden{display:none!important}
+.receipt{max-width:400px;margin:auto}
+.receipt h2{text-align:center}
+.receipt table{min-width:0}
+.toast{position:fixed;right:20px;bottom:20px;background:var(--primary);color:#fff;padding:12px 16px;border-radius:10px;box-shadow:var(--shadow);z-index:30;animation:slideIn .2s ease both}
+.scanner{border:2px dashed var(--line);padding:14px;border-radius:10px;text-align:center}
+#reader{border-radius:10px;overflow:hidden}
+.posGrid{display:grid;grid-template-columns:1.35fr .65fr;gap:15px}
+.cartLine{display:grid;grid-template-columns:1fr 70px 100px 34px;gap:7px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}
+.cartLine input{padding:7px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text)}
+.totalBox{background:var(--bg);border-radius:10px;padding:13px}
+.footerNote{font-size:11px;color:var(--muted);text-align:center;margin-top:25px}
+.spinner{width:34px;height:34px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--accent);animation:spin .7s linear infinite;margin:40px auto}
+.pillRow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.pill{padding:6px 12px;border-radius:20px;border:1px solid var(--line);background:var(--card);font-size:12.5px;font-weight:700;color:var(--muted)}
+.pill.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+@keyframes slideIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+@media(max-width:1000px){.side{width:74px}.brand>div:last-child,.nav button span:last-child,.sideBottom button span:last-child{display:none}.brand{justify-content:center}.g6{grid-template-columns:repeat(3,1fr)}.posGrid{grid-template-columns:1fr}.topSearch{max-width:360px}}
+@media(max-width:700px){.login{grid-template-columns:1fr}.loginHero{display:none}.content{padding:15px}.top{padding:0 12px}.g2,.g3,.g4,.g6{grid-template-columns:1fr 1fr}.topSearch{display:none}.cartLine{grid-template-columns:1fr 55px 85px 30px}}
+@media print{.side,.top,.noPrint{display:none!important}.content{padding:0}.card{box-shadow:none;border:0}.receipt{max-width:none}.modalBack{position:static;background:#fff;padding:0}}
+</style>
+</head>
+<body>
+<div id="root"><div class="spinner"></div></div>
+<div id="modal" class="modalBack hidden"></div>
+<div id="toast" class="toast hidden"></div>
+
+<script>
+/* ============================================================================
+   UNIVERSAL BUSINESS MANAGER — multi-tenant edition (Supabase backed)
+   See DEPLOY_INSTRUCTIONS.md for setup. Fill in SUPABASE_URL / SUPABASE_ANON_KEY
+   at the top of this file before use.
+   ============================================================================ */
+
+const sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+let session=null, me=null, business=null, view='login', authMode='login';
+let cache={shops:[],categories:[],products:[],stock:{},sales:[],saleLines:[],purchases:[],transfers:[],adjustments:[],expenses:[],activity:[],members:[]};
+let storeFilter='all', search='', cart=[], editing=null, scanner=null, registerBusy=false;
+
+/* ---------------- generic helpers ---------------- */
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function money(n){return Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+' '+(business?.currency||'USD')}
+function dateOnly(d=new Date()){return new Date(d).toISOString().slice(0,10)}
+function timeNow(){return new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}
+function roleName(r){return {owner:'Owner',manager:'Manager',inventory:'Main Store Operator',cashier:'Cashier'}[r]||r}
+function can(r){return me&&(me.role==='owner'||me.role===r||(me.role==='manager'&&['inventory','cashier'].includes(r)))}
+function makeBarcode(){return '2'+Date.now().toString().slice(-9)+Math.floor(Math.random()*10)}
+function product(codeOrBarcode){return cache.products.find(p=>p.code===codeOrBarcode||p.barcode===codeOrBarcode)}
+function productById(id){return cache.products.find(p=>p.id===id)}
+function shopObj(id){return cache.shops.find(s=>s.id===id)}
+function stock(shopId,code){return Number(cache.stock[shopId]?.[code]||0)}
+function setStockLocal(shopId,code,q){cache.stock[shopId]=cache.stock[shopId]||{};cache.stock[shopId][code]=Math.max(0,Number(q||0))}
+function statusTag(q){return q<=0?'<span class="tag out">Out</span>':q<=business.low_stock?'<span class="tag low">Low</span>':'<span class="tag ok">In stock</span>'}
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.remove('hidden');clearTimeout(window.__toastT);window.__toastT=setTimeout(()=>t.classList.add('hidden'),2600)}
+function visibleStores(){return cache.shops.filter(s=>me.role!=='cashier'||s.id===me.shop_id)}
+
+async function persistStock(shopId,code,qty){
+  const p=product(code); if(!p) return;
+  await sb.from('stock_levels').upsert({business_id:me.business_id,shop_id:shopId,product_id:p.id,qty:Math.max(0,qty)});
+}
+async function logActivity(type,description){
+  await sb.from('activity_log').insert({business_id:me.business_id,type,description,by_name:me.name});
+  cache.activity.push({type,description,by_name:me.name,created_at:new Date().toISOString()});
+}
+
+/* ---------------- boot / auth ---------------- */
+async function boot(){
+  const {data:{session:s}}=await sb.auth.getSession();
+  session=s;
+  if(session) await loadMember(); else render();
+}
+async function loadMember(){
+  const {data:m}=await sb.from('members').select('*').eq('auth_user_id',session.user.id).maybeSingle();
+  if(!m){ me=null; view='register'; render(); return; }
+  me=m;
+  document.documentElement.setAttribute('data-theme', me.theme||'light');
+  const {data:b}=await sb.from('businesses').select('*').eq('id',m.business_id).single();
+  business=b;
+  await loadAllData();
+  view = me.role==='cashier' ? 'pos' : 'dashboard';
+  render();
+}
+async function loadAllData(){
+  const [shops,categories,products,stockRows,sales,saleLines,purchases,transfers,adjustments,expenses,activity,members] = await Promise.all([
+    sb.from('shops').select('*').order('created_at'),
+    sb.from('categories').select('*').order('name'),
+    sb.from('products').select('*').order('name'),
+    sb.from('stock_levels').select('*'),
+    sb.from('sales').select('*').order('created_at',{ascending:false}),
+    sb.from('sale_lines').select('*'),
+    sb.from('purchases').select('*').order('created_at',{ascending:false}),
+    sb.from('transfers').select('*').order('created_at',{ascending:false}),
+    sb.from('adjustments').select('*').order('created_at',{ascending:false}),
+    sb.from('expenses').select('*').order('created_at',{ascending:false}),
+    sb.from('activity_log').select('*').order('created_at',{ascending:false}).limit(60),
+    sb.from('members').select('*'),
+  ]);
+  cache.shops=shops.data||[]; cache.categories=categories.data||[]; cache.products=products.data||[];
+  cache.sales=sales.data||[]; cache.saleLines=saleLines.data||[]; cache.purchases=purchases.data||[];
+  cache.transfers=transfers.data||[]; cache.adjustments=adjustments.data||[]; cache.expenses=expenses.data||[];
+  cache.activity=activity.data||[]; cache.members=members.data||[];
+  cache.stock={};
+  (stockRows.data||[]).forEach(r=>{const p=cache.products.find(x=>x.id===r.product_id); if(p){cache.stock[r.shop_id]=cache.stock[r.shop_id]||{};cache.stock[r.shop_id][p.code]=r.qty;}});
+  if(cache.categories.length===0){ cache.categories=[{name:'General'}]; }
+}
+function linesFor(saleId){return cache.saleLines.filter(l=>l.sale_id===saleId)}
+
+async function loginSubmit(e){
+  e.preventDefault();
+  const idf=document.getElementById('lu').value.trim(), pass=document.getElementById('lp').value;
+  const err=document.getElementById('loginErr'); err.textContent='';
+  let email=idf;
+  if(!idf.includes('@')){
+    const {data}=await sb.from('username_directory').select('email').eq('username',idf.toLowerCase()).maybeSingle();
+    if(!data){ err.textContent='No account found with that username.'; return; }
+    email=data.email;
+  }
+  const {error}=await sb.auth.signInWithPassword({email,password:pass});
+  if(error){ err.textContent='Incorrect username/email or password.'; return; }
+  const {data:{session:s}}=await sb.auth.getSession(); session=s;
+  await loadMember();
+}
+async function registerSubmit(e){
+  e.preventDefault();
+  if(registerBusy) return; registerBusy=true;
+  const err=document.getElementById('regErr'); err.textContent='';
+  const bizName=document.getElementById('rb').value.trim();
+  const ownerName=document.getElementById('rn').value.trim();
+  const email=document.getElementById('re').value.trim();
+  const pass=document.getElementById('rp').value, pass2=document.getElementById('rp2').value;
+  if(pass!==pass2){ err.textContent='Passwords do not match.'; registerBusy=false; return; }
+  if(pass.length<6){ err.textContent='Password must be at least 6 characters.'; registerBusy=false; return; }
+  const {data:signData,error:signErr}=await sb.auth.signUp({email,password:pass});
+  if(signErr){ err.textContent=signErr.message; registerBusy=false; return; }
+  if(!signData.session){
+    err.textContent=''; toast('Check your email to confirm your account, then sign in.');
+    authMode='login'; render(); registerBusy=false; return;
+  }
+  session=signData.session;
+  const {data:biz,error:bizErr}=await sb.from('businesses').insert({name:bizName, short:bizName.slice(0,3).toUpperCase()}).select().single();
+  if(bizErr){ err.textContent=bizErr.message; registerBusy=false; return; }
+  const {error:memErr}=await sb.from('members').insert({business_id:biz.id, auth_user_id:session.user.id, name:ownerName, role:'owner'});
+  if(memErr){ err.textContent=memErr.message; registerBusy=false; return; }
+  await sb.from('shops').insert({business_id:biz.id, name:'Main Store', type:'warehouse'});
+  await sb.from('categories').insert([{business_id:biz.id,name:'General'},{business_id:biz.id,name:'Food & Beverage'},{business_id:biz.id,name:'Household'}]);
+  toast('Business registered! Setting up your dashboard…');
+  registerBusy=false;
+  await loadMember();
+}
+async function logout(){ await sb.auth.signOut(); session=null; me=null; business=null; cart=[]; view='login'; authMode='login'; render(); }
+function go(v){view=v;search='';render()}
+function globalSearch(v){search=v; if(['products','inventory','sales'].includes(view)) renderView()}
+async function toggleTheme(){
+  const cur=document.documentElement.getAttribute('data-theme')||'light';
+  const next=cur==='dark'?'light':'dark';
+  document.documentElement.setAttribute('data-theme',next);
+  if(me){ me.theme=next; await sb.from('members').update({theme:next}).eq('id',me.id); }
+}
+
+/* ---------------- render root ---------------- */
+function render(){
+  const root=document.getElementById('root');
+  if(!session||!me){ root.innerHTML = view==='register' ? registerHtml() : loginHtml(); bindAuth(); return; }
+  root.innerHTML = layout();
+  renderView();
+}
+function loginHtml(){
+  return `<div class="login"><div class="loginHero"><div class="heroIn"><div class="logo">UB</div><h1>Universal Business Manager</h1><p>One adaptable, multi-business system for stores, shops, stock, sales, cashiers, inventory and management reporting — with real scannable barcodes.</p><div class="features"><div class="feature">▣ Multi-business &amp; multi-store</div><div class="feature">▥ Real barcode + camera POS</div><div class="feature">⇄ Stock transfers</div><div class="feature">▦ Analytics &amp; reports</div></div></div></div>
+  <div class="loginBox"><div class="panel">
+    <div class="authTabs"><button class="active" data-mode="login">Sign in</button><button data-mode="register">Register a business</button></div>
+    <form id="loginForm" onsubmit="return false"><h2>Sign in</h2><p class="muted">Owners sign in with email. Staff sign in with the username their manager gave them.</p>
+      <div class="field"><label>Username or email</label><input id="lu" required autocomplete="username"></div>
+      <div class="field" style="margin-top:13px"><label>Password</label><input id="lp" type="password" required autocomplete="current-password"></div>
+      <div id="loginErr" class="bad" style="min-height:20px;margin-top:10px"></div>
+      <button class="btn primary wide" style="margin-top:7px">Sign in</button>
+    </form>
+  </div></div></div>`;
+}
+function registerHtml(){
+  return `<div class="login"><div class="loginHero"><div class="heroIn"><div class="logo">UB</div><h1>Bring your business online</h1><p>Register once and get your own private workspace: add shops, a main store, and staff accounts for managers, operators and cashiers.</p><div class="features"><div class="feature">🔒 Your data is isolated</div><div class="feature">👥 Unlimited staff logins</div></div></div></div>
+  <div class="loginBox"><div class="panel">
+    <div class="authTabs"><button data-mode="login">Sign in</button><button class="active" data-mode="register">Register a business</button></div>
+    <form id="registerForm" onsubmit="return false"><h2>Register your business</h2><p class="muted">You'll be the owner account — add staff logins after you're in.</p>
+      <div class="field"><label>Business name</label><input id="rb" required placeholder="e.g. Horizon Traders"></div>
+      <div class="field" style="margin-top:12px"><label>Your full name</label><input id="rn" required></div>
+      <div class="field" style="margin-top:12px"><label>Your email</label><input id="re" type="email" required></div>
+      <div class="field" style="margin-top:12px"><label>Password</label><input id="rp" type="password" required></div>
+      <div class="field" style="margin-top:12px"><label>Confirm password</label><input id="rp2" type="password" required></div>
+      <div id="regErr" class="bad" style="min-height:20px;margin-top:10px"></div>
+      <button class="btn primary wide" style="margin-top:7px">Create my business</button>
+    </form>
+  </div></div></div>`;
+}
+function bindAuth(){
+  document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>{authMode=b.dataset.mode;view=authMode;render()}));
+  const lf=document.getElementById('loginForm'); if(lf) lf.addEventListener('submit',loginSubmit);
+  const rf=document.getElementById('registerForm'); if(rf) rf.addEventListener('submit',registerSubmit);
+}
+
+function navItems(){
+  if(me.role==='cashier') return [['dashboard','Dashboard','▦'],['pos','Point of Sale','▣'],['myStock','My Stock','▤'],['sales','Sales History','◷']];
+  if(me.role==='inventory') return [['dashboard','Dashboard','▦'],['products','Products &amp; Barcodes','◈'],['inventory','Inventory','▤'],['transfers','Transfers','⇄'],['purchases','Purchases','＋']];
+  return [['dashboard','Dashboard','▦'],['pos','Point of Sale','▣'],['products','Products &amp; Barcodes','◈'],['inventory','Inventory','▤'],['stores','Stores / Shops','⌂'],['transfers','Transfers','⇄'],['purchases','Purchases','＋'],['sales','Sales','◷'],['expenses','Expenses','−'],['reports','Reports','▥'],['users','Staff Accounts','♙'],['settings','Settings','⚙']];
+}
+function lowStockCount(){let n=0;cache.shops.forEach(st=>cache.products.forEach(p=>{const q=stock(st.id,p.code);if(q<=business.low_stock)n++}));return n}
+function layout(){
+  const dark=document.documentElement.getAttribute('data-theme')==='dark';
+  return `<div class="app">
+  <aside class="side"><div class="brand"><div class="logo">${esc(business.short||'UB')}</div><div><b>${esc(business.name)}</b><small>${esc(roleName(me.role))}</small></div></div>
+  <div class="nav">${navItems().map(x=>`<button class="${view===x[0]?'active':''}" onclick="go('${x[0]}')"><span>${x[2]}</span><span>${x[1]}</span>${x[0]==='dashboard'&&lowStockCount()?`<span class="badge">${lowStockCount()}</span>`:''}</button>`).join('')}</div>
+  <div class="sideBottom"><button onclick="logout()">⏻ <span>Log out</span></button></div></aside>
+  <main class="main"><header class="top"><div class="topSearch"><span>⌕</span><input value="${esc(search)}" oninput="globalSearch(this.value)" placeholder="Search products, barcode, sales, customers…"></div>
+  <div class="user"><button class="themeBtn" onclick="toggleTheme()" title="Toggle dark mode">${dark?'☀️':'🌙'}</button><div><b>${esc(me.name)}</b><div class="muted" style="font-size:11px">${esc(roleName(me.role))}${me.shop_id?' · '+esc(shopObj(me.shop_id)?.name||''):''}</div></div><div class="avatar">${esc((me.name||'U').slice(0,1).toUpperCase())}</div></div></header>
+  <section class="content" id="content"></section></main></div>`;
+}
+function pageTitle(){return ({dashboard:'Dashboard',pos:'Point of Sale',products:'Products & Barcodes',inventory:'Inventory',stores:'Stores & Shops',transfers:'Stock Transfers',purchases:'Purchases',sales:'Sales History',expenses:'Expenses',reports:'Reports & Analytics',users:'Staff Accounts',settings:'Business Settings',myStock:'My Stock'}[view]||view)}
+function renderView(){
+  document.title=pageTitle()+' — '+business.name;
+  document.getElementById('content').innerHTML=`<div class="pageHead"><div><h1>${pageTitle()}</h1><div class="muted">${dateOnly()} · ${storeFilter==='all'?'All locations':esc(shopObj(storeFilter)?.name||'')}</div></div><div class="actions">${view==='products'&&can('manager')?`<button class="btn primary" onclick="openProduct()">＋ New Product</button>`:''}${view==='reports'?`<button class="btn gold" onclick="window.print()">🖨 Print</button>`:''}</div></div>`
+    + ({dashboard,pos,products:productsView,inventory:inventoryView,stores:storesView,transfers:transfersView,purchases:purchasesView,sales:salesView,expenses:expensesView,reports:reportsView,users:usersView,settings:settingsView,myStock:myStockView}[view]||dashboard)();
+  renderBarcodes();
+  bindViewEvents();
+}
+function renderBarcodes(){
+  document.querySelectorAll('.barcode-svg').forEach(el=>{
+    try{ JsBarcode(el, el.dataset.barcode, {format:'CODE128', displayValue:true, height:44, width:1.8, margin:6, fontSize:12}); }catch(e){}
+  });
+}
+function bindViewEvents(){
+  const sf=document.getElementById('storeFilterSel'); if(sf) sf.addEventListener('change',()=>{storeFilter=sf.value;renderView()});
+}
+
+/* ---------------- DASHBOARD ---------------- */
+function dashboard(){
+  const today=dateOnly(), sales=cache.sales.filter(s=>s.date===today), rev=sales.reduce((a,s)=>a+Number(s.total),0), allRev=cache.sales.reduce((a,s)=>a+Number(s.total),0);
+  const low=[]; cache.shops.forEach(st=>cache.products.forEach(p=>{const q=stock(st.id,p.code); if(q<=business.low_stock) low.push({st,p,q});}));
+  const units=cache.products.reduce((a,p)=>a+cache.shops.reduce((b,s)=>b+stock(s.id,p.code),0),0);
+  const top=[...cache.products].map(p=>({p,n:linesForProduct(p.code).reduce((a,l)=>a+Number(l.qty),0)})).sort((a,b)=>b.n-a.n).slice(0,6);
+  return `<div class="grid g4"><div class="kpi"><div class="label">Today's sales</div><div class="value">${money(rev)}</div><div class="sub">${sales.length} transaction(s)</div></div><div class="kpi"><div class="label">All-time sales</div><div class="value">${money(allRev)}</div></div><div class="kpi"><div class="label">Products</div><div class="value">${cache.products.length}</div><div class="sub">${units} units across locations</div></div><div class="kpi"><div class="label">Stock alerts</div><div class="value ${low.length?'bad':''}">${low.length}</div><div class="sub">Low / out of stock</div></div></div>
+  <div class="grid g2" style="margin-top:15px"><div class="card"><div class="cardHead"><div><h3>Sales — last 7 days</h3><p>Quick management trend</p></div></div>${salesChart()}</div>
+  <div class="card"><div class="cardHead"><div><h3>Top products</h3><p>Units sold</p></div></div>${top.length?top.map((x,i)=>`<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)"><span>${i+1}. ${esc(x.p.name)}</span><b>${x.n}</b></div>`).join(''):'<p class="muted">No sales yet.</p>'}</div></div>
+  <div class="grid g2"><div class="card"><div class="cardHead"><div><h3>Low stock alerts</h3><p>Across all stores and shops</p></div><button class="btn small" onclick="go('inventory')">View inventory</button></div>${low.slice(0,10).map(x=>`<div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line)"><span>${esc(x.p.name)} <small class="muted">· ${esc(x.st.name)}</small></span><span class="tag ${x.q?'low':'out'}">${x.q} left</span></div>`).join('')||'<p class="muted">Everything is sufficiently stocked.</p>'}</div>
+  <div class="card"><div class="cardHead"><div><h3>Recent activity</h3><p>Latest system movements</p></div></div>${cache.activity.slice(0,8).map(a=>`<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b>${esc(a.description)}</b><div class="muted" style="font-size:11px">${esc(new Date(a.created_at).toLocaleString())} · ${esc(a.by_name)}</div></div>`).join('')||'<p class="muted">No activity yet.</p>'}</div></div>`;
+}
+function linesForProduct(code){const p=product(code); if(!p) return []; return cache.saleLines.filter(l=>l.product_id===p.id)}
+function salesChart(){let vals=[];for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const ds=dateOnly(d);vals.push({d:ds,v:cache.sales.filter(s=>s.date===ds).reduce((a,s)=>a+Number(s.total),0)})}const max=Math.max(...vals.map(x=>x.v),1);return `<div class="chart">${vals.map(x=>`<div class="bar" style="height:${Math.max(5,x.v/max*90)}%"><i>${x.v?Math.round(x.v).toLocaleString():''}</i><span>${x.d.slice(5)}</span></div>`).join('')}</div>`}
+
+/* ---------------- PRODUCTS & BARCODES ---------------- */
+function productsView(){
+  let list=cache.products.filter(p=>p.active!==false); if(search) list=list.filter(p=>(p.name+' '+p.code+' '+p.barcode+' '+p.category).toLowerCase().includes(search.toLowerCase()));
+  return `<div class="card"><div class="searchLine"><input value="${esc(search)}" oninput="search=this.value;renderView()" placeholder="Search product name, SKU, category or barcode…"><button class="btn" onclick="search='';renderView()">Clear</button></div>
+  <div class="tableWrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Category</th><th>Barcode</th><th>Cost</th><th>Price</th><th>Stock</th><th>Status</th><th></th></tr></thead><tbody>
+  ${list.map(p=>{const total=cache.shops.reduce((a,s)=>a+stock(s.id,p.code),0);return `<tr><td><b>${esc(p.name)}</b><div class="muted">${esc(p.unit||'unit')}</div></td><td class="mono">${esc(p.code)}</td><td>${esc(p.category)}</td><td><svg class="barcode-svg" data-barcode="${esc(p.barcode)}"></svg></td><td>${money(p.cost)}</td><td>${money(p.price)}</td><td class="num">${total}</td><td>${statusTag(total)}</td><td><div class="actions"><button class="btn small" onclick="openProduct('${p.code}')">Edit</button><button class="btn small" onclick="printBarcode('${p.code}')">Print</button></div></td></tr>`}).join('')||`<tr><td colspan="9" class="empty">No products found. Click "New Product" to add your first item.</td></tr>`}
+  </tbody></table></div></div>`;
+}
+function openProduct(code=''){
+  editing=code||null;
+  const p=code?product(code):{code:'',name:'',category:cache.categories[0]?.name||'General',barcode:makeBarcode(),cost:0,price:0,unit:'unit',tax:business.tax};
+  document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead"><div><h3>${code?'Edit product':'Add new product'}</h3><p>Barcode is generated automatically and is a real scannable Code128 symbol.</p></div><button class="btn" onclick="closeModal()">✕</button></div>
+  <form id="productForm"><div class="formGrid"><div class="field"><label>Product name</label><input id="pn" value="${esc(p.name)}" required></div><div class="field"><label>SKU / item code</label><input id="pc" value="${esc(p.code)}" required ${code?'readonly':''}></div><div class="field"><label>Category</label><select id="pct">${cache.categories.map(c=>`<option ${c.name===p.category?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div><div class="field"><label>Unit</label><input id="pu" value="${esc(p.unit||'unit')}"></div><div class="field"><label>Cost price</label><input id="pco" type="number" min="0" step=".01" value="${p.cost||0}"></div><div class="field"><label>Selling price</label><input id="pp" type="number" min="0" step=".01" value="${p.price||0}"></div><div class="field"><label>Barcode value</label><input id="pb" value="${esc(p.barcode)}"></div><div class="field"><label>Tax %</label><input id="pt" type="number" min="0" value="${p.tax??business.tax}"></div></div>
+  <div class="barcodeBox" style="margin-top:16px"><svg class="barcode-svg" data-barcode="${esc(p.barcode)}"></svg></div>
+  <div class="actions" style="margin-top:18px"><button class="btn primary">Save product</button><button type="button" class="btn" onclick="closeModal()">Cancel</button></div></form></div>`;
+  document.getElementById('modal').classList.remove('hidden');
+  renderBarcodes();
+  document.getElementById('productForm').addEventListener('submit', saveProduct);
+}
+async function saveProduct(e){
+  e.preventDefault();
+  const code=document.getElementById('pc').value.trim();
+  const obj={code, name:document.getElementById('pn').value.trim(), category:document.getElementById('pct').value, unit:document.getElementById('pu').value.trim()||'unit', cost:Number(document.getElementById('pco').value), price:Number(document.getElementById('pp').value), barcode:document.getElementById('pb').value.trim()||makeBarcode(), tax:Number(document.getElementById('pt').value)||0, active:true, business_id:me.business_id};
+  if(!editing && product(code)){ toast('SKU already exists'); return; }
+  let error;
+  if(editing){ const p=product(editing); ({error}=await sb.from('products').update(obj).eq('id',p.id)); if(!error) Object.assign(p,obj); }
+  else { const {data,error:e2}=await sb.from('products').insert(obj).select().single(); error=e2; if(!error) cache.products.push(data); }
+  if(error){ toast(error.message.includes('duplicate')?'That SKU or barcode already exists.':error.message); return; }
+  await logActivity('product', editing?'Product updated: '+obj.name:'Product created: '+obj.name);
+  closeModal(); renderView(); toast('Product saved');
+}
+function closeModal(){document.getElementById('modal').classList.add('hidden');document.getElementById('modal').innerHTML='';editing=null;stopCameraScan()}
+function printBarcode(code){
+  const p=product(code);
+  document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead noPrint"><h3>Barcode label</h3><button class="btn" onclick="closeModal()">✕</button></div><div style="text-align:center;padding:20px"><h2>${esc(p.name)}</h2><svg class="barcode-svg" data-barcode="${esc(p.barcode)}"></svg><div class="mono">${esc(p.code)} · ${money(p.price)}</div></div><div class="actions noPrint"><button class="btn primary" onclick="window.print()">Print label</button></div></div>`;
+  document.getElementById('modal').classList.remove('hidden'); renderBarcodes();
+}
+
+/* ---------------- INVENTORY ---------------- */
+function inventoryView(){
+  const stores=visibleStores(); let rows=[]; stores.forEach(s=>cache.products.forEach(p=>rows.push({s,p,q:stock(s.id,p.code)})));
+  if(search) rows=rows.filter(x=>(x.p.name+' '+x.p.code+' '+x.p.barcode+' '+x.s.name).toLowerCase().includes(search.toLowerCase()));
+  return `<div class="card"><div class="searchLine"><input value="${esc(search)}" oninput="search=this.value;renderView()" placeholder="Search inventory by product, barcode, SKU or location"><button class="btn" onclick="search='';renderView()">Clear</button></div>
+  <div class="tableWrap"><table><thead><tr><th>Location</th><th>Product</th><th>SKU</th><th>On hand</th><th>Cost value</th><th>Retail value</th><th>Status</th></tr></thead><tbody>
+  ${rows.map(x=>`<tr><td>${esc(x.s.name)}</td><td><b>${esc(x.p.name)}</b></td><td class="mono">${esc(x.p.code)}</td><td class="num">${x.q}</td><td>${money(x.q*x.p.cost)}</td><td>${money(x.q*x.p.price)}</td><td>${statusTag(x.q)}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">No inventory records.</td></tr>'}
+  </tbody></table></div></div>
+  <div class="card"><div class="cardHead"><div><h3>Stock adjustment</h3><p>Owner/manager can correct physical counts with an audit record.</p></div></div>
+  <form id="adjForm" class="formGrid"><div class="field"><label>Location</label><select id="as">${stores.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>Product</label><select id="ap">${cache.products.map(p=>`<option value="${p.code}">${esc(p.name)} (${esc(p.code)})</option>`).join('')}</select></div><div class="field"><label>New physical quantity</label><input id="aq" type="number" min="0" required></div><div class="field"><label>Reason</label><input id="ar" required placeholder="Stock count / damaged / correction"></div><button class="btn primary">Save adjustment</button></form></div>`;
+}
+async function bindAdjForm(){ const f=document.getElementById('adjForm'); if(f) f.addEventListener('submit', adjustStock); }
+async function adjustStock(e){
+  e.preventDefault(); if(!can('manager')) return;
+  const s=document.getElementById('as').value, code=document.getElementById('ap').value, n=Number(document.getElementById('aq').value), old=stock(s,code);
+  setStockLocal(s,code,n); await persistStock(s,code,n);
+  await sb.from('adjustments').insert({business_id:me.business_id,shop_id:s,product_id:product(code).id,old_qty:old,new_qty:n,reason:document.getElementById('ar').value,by_name:me.name});
+  await logActivity('adjustment',`Stock adjusted: ${product(code)?.name} at ${shopObj(s)?.name} (${old} → ${n})`);
+  renderView(); toast('Stock adjusted');
+}
+
+/* ---------------- STORES / SHOPS ---------------- */
+function storesView(){
+  return `<div class="grid g3">${cache.shops.map(s=>`<div class="card"><div class="cardHead"><div><h3>${esc(s.name)}</h3><p>${esc(s.type)}</p></div><span class="tag ok">${cache.products.reduce((a,p)=>a+(stock(s.id,p.code)>0?1:0),0)} products</span></div><div class="muted">Stock units: <b>${cache.products.reduce((a,p)=>a+stock(s.id,p.code),0)}</b></div><div class="actions" style="margin-top:15px"><button class="btn small" onclick="editStore('${s.id}')">Edit</button>${cache.shops.length>1&&can('manager')?`<button class="btn small danger" onclick="deleteStore('${s.id}')">Delete</button>`:''}</div></div>`).join('')}</div>
+  <div class="card"><div class="cardHead"><div><h3>Create a new store / shop</h3><p>A business can operate warehouses, branches, retail shops or outlets.</p></div></div>
+  <form id="storeForm" class="formGrid"><div class="field"><label>Store / Shop name</label><input id="sn" required placeholder="e.g. Downtown Branch"></div><div class="field"><label>Type</label><select id="st"><option value="shop">Retail Shop</option><option value="warehouse">Warehouse</option><option value="branch">Branch</option><option value="outlet">Outlet</option></select></div><button class="btn primary">＋ Create location</button></form></div>`;
+}
+function bindStoresForm(){ const f=document.getElementById('storeForm'); if(f) f.addEventListener('submit', addStore); }
+async function addStore(e){
+  e.preventDefault();
+  const {data,error}=await sb.from('shops').insert({business_id:me.business_id,name:document.getElementById('sn').value.trim(),type:document.getElementById('st').value}).select().single();
+  if(error){ toast(error.message); return; }
+  cache.shops.push(data); await logActivity('store','Location created: '+data.name); renderView(); toast('Location created');
+}
+function editStore(sid){
+  const s=shopObj(sid);
+  document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead"><h3>Edit location</h3><button class="btn" onclick="closeModal()">✕</button></div><form id="editStoreForm"><div class="field"><label>Name</label><input id="esn" value="${esc(s.name)}" required></div><div class="field" style="margin-top:12px"><label>Type</label><select id="est"><option ${s.type==='shop'?'selected':''}>shop</option><option ${s.type==='warehouse'?'selected':''}>warehouse</option><option ${s.type==='branch'?'selected':''}>branch</option><option ${s.type==='outlet'?'selected':''}>outlet</option></select></div><button class="btn primary" style="margin-top:16px">Save</button></form></div>`;
+  document.getElementById('modal').classList.remove('hidden');
+  document.getElementById('editStoreForm').addEventListener('submit', (e)=>saveStore(e,sid));
+}
+async function saveStore(e,sid){
+  e.preventDefault(); const s=shopObj(sid); const name=document.getElementById('esn').value.trim(), type=document.getElementById('est').value;
+  const {error}=await sb.from('shops').update({name,type}).eq('id',sid);
+  if(error){ toast(error.message); return; }
+  s.name=name; s.type=type; closeModal(); renderView();
+}
+async function deleteStore(sid){
+  if(!confirm('Delete this location and its current stock? Historical sales remain.')) return;
+  await sb.from('shops').delete().eq('id',sid);
+  cache.shops=cache.shops.filter(s=>s.id!==sid); delete cache.stock[sid];
+  cache.members.forEach(u=>{if(u.shop_id===sid) u.shop_id=null});
+  renderView();
+}
+
+/* ---------------- TRANSFERS ---------------- */
+function transfersView(){
+  return `<div class="card"><div class="cardHead"><div><h3>Transfer stock</h3><p>Move inventory between any two locations with an audit trail.</p></div></div>
+  <form id="transferForm" class="formGrid"><div class="field"><label>From</label><select id="tf">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>To</label><select id="tt">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>Product / barcode</label><input id="tp" list="plist" required placeholder="Scan or type barcode / SKU"><datalist id="plist">${cache.products.map(p=>`<option value="${esc(p.barcode)}">${esc(p.name)}</option><option value="${esc(p.code)}">${esc(p.name)}</option>`).join('')}</datalist></div><div class="field"><label>Quantity</label><input id="tq" type="number" min="1" required></div><div class="field"><label>Reference / note</label><input id="tn"></div><button class="btn gold">⇄ Transfer</button></form></div>
+  <div class="card"><div class="tableWrap"><table><thead><tr><th>Date</th><th>From</th><th>To</th><th>Product</th><th>Qty</th><th>By</th><th>Note</th></tr></thead><tbody>${cache.transfers.slice(0,100).map(t=>`<tr><td>${t.date}</td><td>${esc(shopObj(t.from_shop)?.name)}</td><td>${esc(shopObj(t.to_shop)?.name)}</td><td>${esc(productById(t.product_id)?.name||'')}</td><td>${t.qty}</td><td>${esc(t.by_name)}</td><td>${esc(t.note||'')}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">No transfers.</td></tr>'}</tbody></table></div></div>`;
+}
+function bindTransferForm(){ const f=document.getElementById('transferForm'); if(f) f.addEventListener('submit', doTransfer); }
+async function doTransfer(e){
+  e.preventDefault();
+  const from=document.getElementById('tf').value, to=document.getElementById('tt').value, input=document.getElementById('tp').value.trim(), p=product(input), q=Number(document.getElementById('tq').value);
+  if(from===to||!p||q<1||q>stock(from,p.code)){ toast('Check source, destination, product and available stock'); return; }
+  setStockLocal(from,p.code,stock(from,p.code)-q); setStockLocal(to,p.code,stock(to,p.code)+q);
+  await persistStock(from,p.code,stock(from,p.code)); await persistStock(to,p.code,stock(to,p.code));
+  const {data}=await sb.from('transfers').insert({business_id:me.business_id,from_shop:from,to_shop:to,product_id:p.id,qty:q,note:document.getElementById('tn').value.trim(),by_name:me.name}).select().single();
+  cache.transfers.unshift(data);
+  await logActivity('transfer',`${q} × ${p.name} transferred from ${shopObj(from)?.name} to ${shopObj(to)?.name}`);
+  renderView(); toast('Transfer recorded');
+}
+
+/* ---------------- PURCHASES ---------------- */
+function purchasesView(){
+  return `<div class="card"><div class="cardHead"><div><h3>Receive purchase / stock in</h3><p>Record supplier deliveries directly into a selected location.</p></div></div>
+  <form id="purchaseForm" class="formGrid"><div class="field"><label>Location</label><select id="ps">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>Product / barcode</label><input id="pprod" list="p2" required><datalist id="p2">${cache.products.map(p=>`<option value="${esc(p.code)}">${esc(p.name)}</option><option value="${esc(p.barcode)}">${esc(p.name)}</option>`).join('')}</datalist></div><div class="field"><label>Quantity</label><input id="pqty" type="number" min="1" required></div><div class="field"><label>Cost / unit</label><input id="pcost" type="number" min="0" step=".01" required></div><div class="field"><label>Supplier</label><input id="psup" placeholder="Supplier name"></div><div class="field"><label>Invoice / reference</label><input id="pref"></div><button class="btn primary">＋ Receive stock</button></form></div>
+  <div class="card"><div class="tableWrap"><table><thead><tr><th>Date</th><th>Location</th><th>Product</th><th>Qty</th><th>Cost/unit</th><th>Total</th><th>Supplier</th><th>By</th></tr></thead><tbody>${cache.purchases.slice(0,100).map(x=>`<tr><td>${x.date}</td><td>${esc(shopObj(x.shop_id)?.name)}</td><td>${esc(productById(x.product_id)?.name||'')}</td><td>${x.qty}</td><td>${money(x.cost)}</td><td>${money(x.qty*x.cost)}</td><td>${esc(x.supplier||'')}</td><td>${esc(x.by_name)}</td></tr>`).join('')||'<tr><td colspan="8" class="empty">No purchases recorded.</td></tr>'}</tbody></table></div></div>`;
+}
+function bindPurchaseForm(){ const f=document.getElementById('purchaseForm'); if(f) f.addEventListener('submit', receivePurchase); }
+async function receivePurchase(e){
+  e.preventDefault();
+  const p=product(document.getElementById('pprod').value.trim()), s=document.getElementById('ps').value, q=Number(document.getElementById('pqty').value), cost=Number(document.getElementById('pcost').value);
+  if(!p||q<1){ toast('Select a valid product'); return; }
+  setStockLocal(s,p.code,stock(s,p.code)+q); await persistStock(s,p.code,stock(s,p.code));
+  const {data}=await sb.from('purchases').insert({business_id:me.business_id,shop_id:s,product_id:p.id,qty:q,cost,supplier:document.getElementById('psup').value.trim(),ref:document.getElementById('pref').value.trim(),by_name:me.name}).select().single();
+  cache.purchases.unshift(data);
+  await logActivity('purchase',`${q} × ${p.name} received at ${shopObj(s)?.name}`);
+  renderView(); toast('Purchase received');
+}
+
+/* ---------------- POS + BARCODE SCAN-TO-SALE ---------------- */
+function activeShopId(){ return me.role==='cashier'?me.shop_id:(storeFilter==='all'?cache.shops.find(s=>s.type==='shop')?.id||cache.shops[0]?.id:storeFilter); }
+function pos(){
+  const shop=shopObj(activeShopId()); if(!shop) return '<div class="card"><p class="muted">Create a shop first, under Stores / Shops.</p></div>';
+  const subtotal=cart.reduce((a,l)=>a+l.qty*l.price,0), tax=cart.reduce((a,l)=>a+l.qty*l.price*l.tax/100,0), total=subtotal+tax;
+  return `<div class="notice">Selling at <b>${esc(shop.name)}</b>. Scan a barcode with a USB scanner or your camera — each scan opens a confirm step before it's added to the sale.</div>
+  <div class="posGrid"><div>
+    <div class="card"><div class="cardHead"><div><h3>Barcode scanner</h3><p>USB scanners act like a keyboard: scan, then press Enter. Or use your device camera.</p></div><button class="btn small gold" onclick="openCameraModal()">📷 Scan with camera</button></div>
+    <form id="scanForm" class="searchLine"><input id="scanInput" autofocus placeholder="Scan barcode or type SKU / product name, then press Enter"><button class="btn primary">Look up</button></form>
+    <div class="card" style="margin:14px 0 0;box-shadow:none;border-style:dashed"><div class="searchLine"><input id="posSearchInput" placeholder="Or search products…"></div><div id="posProducts">${posProducts('')}</div></div></div>
+    </div>
+    <div><div class="card"><div class="cardHead"><div><h3>Current sale</h3><p>${cart.length} line(s)</p></div><button class="btn small danger" onclick="cart=[];renderView()">Clear</button></div>${cart.length?cart.map((l,i)=>`<div class="cartLine"><div><b>${esc(l.name)}</b><div class="muted">${esc(l.code)} · ${money(l.price)}</div></div><input type="number" min="1" value="${l.qty}" onchange="changeCart(${i},this.value)"><b>${money(l.qty*l.price)}</b><button class="btn small danger" onclick="removeCart(${i})">×</button></div>`).join(''):'<p class="muted">No items added.</p>'}
+    <div class="totalBox" style="margin-top:14px"><div style="display:flex;justify-content:space-between"><span>Subtotal</span><b>${money(subtotal)}</b></div><div style="display:flex;justify-content:space-between;margin-top:6px"><span>Tax</span><b>${money(tax)}</b></div><hr><div style="display:flex;justify-content:space-between;font-size:19px"><b>Total</b><b>${money(total)}</b></div>
+    <div class="formGrid" style="margin-top:12px"><div class="field"><label>Customer</label><input id="customerName" placeholder="Walk-in customer"></div><div class="field"><label>Payment</label><select id="pay"><option>Cash</option><option>Mobile Money</option><option>Card</option><option>Bank</option><option>Credit</option></select></div></div>
+    <button class="btn primary wide" style="margin-top:13px" onclick="completeSale()">Complete Sale</button></div></div></div></div>`;
+}
+function posProducts(q){
+  const shop=shopObj(activeShopId()); if(!shop) return '';
+  return cache.products.filter(p=>{const st=stock(shop.id,p.code); return st>0 && (p.name+' '+p.code+' '+p.barcode).toLowerCase().includes((q||'').toLowerCase())}).slice(0,24)
+    .map(p=>`<button class="btn" style="text-align:left;margin:4px;width:calc(50% - 12px)" onclick="scanLookup('${p.code}')"><b>${esc(p.name)}</b><br><small>${esc(p.barcode)} · ${stock(shop.id,p.code)} left · ${money(p.price)}</small></button>`).join('')||'<p class="muted">No matching stock.</p>';
+}
+function bindPosEvents(){
+  const sf=document.getElementById('scanForm'); if(sf) sf.addEventListener('submit',(e)=>{e.preventDefault();scanLookup(document.getElementById('scanInput').value.trim());document.getElementById('scanInput').value='';document.getElementById('scanInput').focus();});
+  const psi=document.getElementById('posSearchInput'); if(psi) psi.addEventListener('input',()=>{document.getElementById('posProducts').innerHTML=posProducts(psi.value)});
+}
+function scanLookup(value){
+  if(!value) return;
+  const p=product(value) || cache.products.find(x=>(x.name+' '+x.code).toLowerCase().includes(value.toLowerCase()));
+  if(!p){ toast('No product matches "'+value+'"'); return; }
+  openScanConfirm(p);
+}
+function openScanConfirm(p){
+  const shop=shopObj(activeShopId()); const available=stock(shop.id,p.code);
+  document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead"><div><h3>Confirm item</h3><p>Review quantity and price before adding it to the sale.</p></div><button class="btn" onclick="closeModal()">✕</button></div>
+  <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center"><svg class="barcode-svg" data-barcode="${esc(p.barcode)}"></svg>
+  <div><h3 style="margin:0 0 4px">${esc(p.name)}</h3><div class="muted">${esc(p.code)} · ${esc(p.category)}</div><div class="tag ${available<=0?'out':available<=business.low_stock?'low':'ok'}" style="margin-top:8px">${available} in stock at ${esc(shop.name)}</div></div></div>
+  <form id="confirmForm" class="formGrid" style="margin-top:18px"><div class="field"><label>Quantity</label><input id="cfQty" type="number" min="1" max="${available}" value="1" required></div><div class="field"><label>Unit price</label><input id="cfPrice" type="number" min="0" step=".01" value="${p.price}" required></div><div class="field"><button class="btn primary wide" ${available<=0?'disabled':''}>Add to sale</button></div></form></div>`;
+  document.getElementById('modal').classList.remove('hidden'); renderBarcodes();
+  document.getElementById('confirmForm').addEventListener('submit',(e)=>{
+    e.preventDefault();
+    const qty=Number(document.getElementById('cfQty').value), price=Number(document.getElementById('cfPrice').value);
+    if(qty<1||qty>available){ toast('Not enough stock for that quantity'); return; }
+    const line=cart.find(x=>x.code===p.code);
+    if(line){ if(line.qty+qty>available){ toast('Not enough stock'); return; } line.qty+=qty; line.price=price; }
+    else cart.push({code:p.code,name:p.name,price,tax:p.tax||0,qty});
+    closeModal(); renderView(); toast(`Added ${qty} × ${p.name}`);
+    setTimeout(()=>document.getElementById('scanInput')?.focus(),50);
+  });
+}
+function changeCart(i,v){
+  const sid=activeShopId(), n=Math.max(1,Number(v));
+  if(n>stock(sid,cart[i].code)){ toast('Not enough stock'); renderView(); return; }
+  cart[i].qty=n; renderView();
+}
+function removeCart(i){ cart.splice(i,1); renderView(); }
+async function completeSale(){
+  if(!cart.length){ toast('Cart is empty'); return; }
+  const sid=activeShopId();
+  const subtotal=cart.reduce((a,l)=>a+l.qty*l.price,0), tax=cart.reduce((a,l)=>a+l.qty*l.price*l.tax/100,0), total=subtotal+tax;
+  if(cart.some(l=>l.qty>stock(sid,l.code))){ toast('Stock changed; please review the cart'); return; }
+  const receipt='R-'+Date.now().toString().slice(-7);
+  const {data:sale,error}=await sb.from('sales').insert({business_id:me.business_id,shop_id:sid,receipt,date:dateOnly(),time:timeNow(),subtotal,tax,total,payment:document.getElementById('pay')?.value||'Cash',customer:document.getElementById('customerName')?.value.trim()||'Walk-in',cashier_name:me.name}).select().single();
+  if(error){ toast(error.message); return; }
+  const lineRows=cart.map(l=>({sale_id:sale.id,business_id:me.business_id,product_id:product(l.code).id,name:l.name,code:l.code,qty:l.qty,price:l.price,tax:l.tax}));
+  await sb.from('sale_lines').insert(lineRows);
+  cache.sales.unshift(sale); cache.saleLines.push(...lineRows);
+  for(const l of cart){ setStockLocal(sid,l.code,stock(sid,l.code)-l.qty); await persistStock(sid,l.code,stock(sid,l.code)); }
+  await logActivity('sale',`Sale ${receipt}: ${money(total)} at ${shopObj(sid)?.name}`);
+  showReceipt(sale, lineRows); cart=[];
+}
+function showReceipt(s, lines){
+  const l = lines || linesFor(s.id);
+  document.getElementById('modal').innerHTML=`<div class="modal"><div class="actions noPrint"><button class="btn" onclick="closeModal()">Close</button><button class="btn primary" onclick="window.print()">Print receipt</button></div><div class="receipt"><h2>${esc(business.name)}</h2><div class="muted" style="text-align:center">${esc(business.address||'')} ${esc(business.phone||'')}</div><hr><p><b>Receipt:</b> ${s.receipt}<br><b>Date:</b> ${s.date} ${s.time}<br><b>Cashier:</b> ${esc(s.cashier_name)}<br><b>Customer:</b> ${esc(s.customer)}</p><table>${l.map(x=>`<tr><td>${esc(x.name)} × ${x.qty}</td><td class="right">${money(x.qty*x.price)}</td></tr>`).join('')}<tr><td>Subtotal</td><td class="right">${money(s.subtotal)}</td></tr><tr><td>Tax</td><td class="right">${money(s.tax)}</td></tr><tr><th>Total</th><th class="right">${money(s.total)}</th></tr></table><p><b>Payment:</b> ${esc(s.payment)}</p><hr><p style="text-align:center">${esc(business.receipt_footer||'Thank you')}</p></div></div>`;
+  document.getElementById('modal').classList.remove('hidden');
+}
+
+/* ---- Camera barcode scanning (html5-qrcode) ---- */
+function openCameraModal(){
+  document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead"><div><h3>Camera barcode scanner</h3><p>Point the camera at a printed barcode. Allow camera access if prompted.</p></div><button class="btn" onclick="closeModal()">✕</button></div><div id="reader" style="width:100%;min-height:260px"></div><div id="cameraStatus" class="muted" style="margin-top:10px;text-align:center">Starting camera…</div></div>`;
+  document.getElementById('modal').classList.remove('hidden');
+  startCameraScan();
+}
+function startCameraScan(){
+  if(!window.Html5Qrcode){ document.getElementById('cameraStatus').textContent='Camera scanner library failed to load.'; return; }
+  if(scanner) return;
+  scanner=new Html5Qrcode('reader');
+  scanner.start({facingMode:'environment'}, {fps:10, qrbox:230},
+    (decodedText)=>{ stopCameraScan(); closeModal(); scanLookup(decodedText); },
+    ()=>{ /* per-frame decode miss - ignore */ }
+  ).then(()=>{ const st=document.getElementById('cameraStatus'); if(st) st.textContent='Scanning… hold the barcode steady in the frame.'; })
+   .catch(()=>{ const st=document.getElementById('cameraStatus'); if(st) st.textContent='Camera unavailable — check permissions, or use a USB scanner / type the code manually.'; });
+}
+function stopCameraScan(){
+  if(scanner){ scanner.stop().then(()=>scanner.clear()).catch(()=>{}); scanner=null; }
+}
+
+/* ---------------- SALES HISTORY ---------------- */
+function salesView(){
+  let list=[...cache.sales]; if(me.role==='cashier') list=list.filter(s=>s.shop_id===me.shop_id);
+  if(search) list=list.filter(s=>(s.receipt+' '+s.customer+' '+s.cashier_name+' '+linesFor(s.id).map(l=>l.name).join(' ')).toLowerCase().includes(search.toLowerCase()));
+  const rev=list.reduce((a,s)=>a+Number(s.total),0);
+  return `<div class="grid g3"><div class="kpi"><div class="label">Transactions</div><div class="value">${list.length}</div></div><div class="kpi"><div class="label">Sales value</div><div class="value">${money(rev)}</div></div><div class="kpi"><div class="label">Average sale</div><div class="value">${money(list.length?rev/list.length:0)}</div></div></div>
+  <div class="card"><div class="searchLine"><input value="${esc(search)}" oninput="search=this.value;renderView()" placeholder="Search receipt, customer, cashier or product…"><button class="btn" onclick="search='';renderView()">Clear</button></div>
+  <div class="tableWrap"><table><thead><tr><th>Receipt</th><th>Date</th><th>Location</th><th>Customer</th><th>Cashier</th><th>Items</th><th>Payment</th><th>Total</th><th></th></tr></thead><tbody>${list.map(s=>`<tr><td class="mono">${s.receipt}</td><td>${s.date}<br><small>${s.time}</small></td><td>${esc(shopObj(s.shop_id)?.name)}</td><td>${esc(s.customer)}</td><td>${esc(s.cashier_name)}</td><td>${linesFor(s.id).reduce((a,l)=>a+Number(l.qty),0)}</td><td>${esc(s.payment)}</td><td><b>${money(s.total)}</b></td><td><button class="btn small" onclick="showReceiptById('${s.id}')">Receipt</button></td></tr>`).join('')||'<tr><td colspan="9" class="empty">No sales found.</td></tr>'}</tbody></table></div></div>`;
+}
+function showReceiptById(id){ const s=cache.sales.find(x=>x.id===id); if(s) showReceipt(s); }
+
+/* ---------------- EXPENSES ---------------- */
+function expensesView(){
+  return `<div class="card"><div class="cardHead"><div><h3>Record expense</h3><p>Track operating costs separately from inventory purchases.</p></div></div>
+  <form id="expenseForm" class="formGrid"><div class="field"><label>Date</label><input id="ed" type="date" value="${dateOnly()}"></div><div class="field"><label>Location</label><select id="es">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>Category</label><select id="ec"><option>Rent</option><option>Utilities</option><option>Transport</option><option>Salaries</option><option>Marketing</option><option>Other</option></select></div><div class="field"><label>Amount</label><input id="ea" type="number" min="0" step=".01" required></div><div class="field"><label>Description</label><input id="en"></div><button class="btn primary">Save expense</button></form></div>
+  <div class="card"><div class="tableWrap"><table><thead><tr><th>Date</th><th>Location</th><th>Category</th><th>Description</th><th>Amount</th><th>By</th></tr></thead><tbody>${cache.expenses.slice(0,150).map(x=>`<tr><td>${x.date}</td><td>${esc(shopObj(x.shop_id)?.name)}</td><td>${x.category}</td><td>${esc(x.description||'')}</td><td>${money(x.amount)}</td><td>${esc(x.by_name)}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">No expenses.</td></tr>'}</tbody></table></div></div>`;
+}
+function bindExpenseForm(){ const f=document.getElementById('expenseForm'); if(f) f.addEventListener('submit', addExpense); }
+async function addExpense(e){
+  e.preventDefault();
+  const row={business_id:me.business_id,date:document.getElementById('ed').value,shop_id:document.getElementById('es').value,category:document.getElementById('ec').value,amount:Number(document.getElementById('ea').value),description:document.getElementById('en').value.trim(),by_name:me.name};
+  const {data,error}=await sb.from('expenses').insert(row).select().single();
+  if(error){ toast(error.message); return; }
+  cache.expenses.unshift(data); await logActivity('expense','Expense recorded'); renderView(); toast('Expense saved');
+}
+
+/* ---------------- REPORTS ---------------- */
+function reportsView(){
+  const sales=cache.sales, rev=sales.reduce((a,s)=>a+Number(s.total),0), expenses=cache.expenses.reduce((a,e)=>a+Number(e.amount),0), purchaseTotal=cache.purchases.reduce((a,p)=>a+Number(p.qty)*Number(p.cost),0);
+  const gross=cache.saleLines.reduce((a,l)=>a+Number(l.qty)*(Number(l.price)-(productById(l.product_id)?.cost||0)),0);
+  return `<div class="grid g4"><div class="kpi"><div class="label">Revenue</div><div class="value">${money(rev)}</div></div><div class="kpi"><div class="label">Gross profit*</div><div class="value ok">${money(gross)}</div></div><div class="kpi"><div class="label">Purchases</div><div class="value">${money(purchaseTotal)}</div></div><div class="kpi"><div class="label">Expenses</div><div class="value bad">${money(expenses)}</div></div></div>
+  <div class="grid g2"><div class="card"><div class="cardHead"><div><h3>Sales by location</h3><p>All recorded sales</p></div></div>${cache.shops.map(s=>{const x=sales.filter(a=>a.shop_id===s.id).reduce((a,b)=>a+Number(b.total),0);return `<div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line)"><span>${esc(s.name)}</span><b>${money(x)}</b></div>`}).join('')}</div>
+  <div class="card"><div class="cardHead"><div><h3>Payment mix</h3></div></div>${['Cash','Mobile Money','Card','Bank','Credit'].map(pm=>{const x=sales.filter(s=>s.payment===pm).reduce((a,b)=>a+Number(b.total),0);return `<div style="display:flex;justify-content:space-between;padding:10px 0"><span>${pm}</span><b>${money(x)}</b></div>`}).join('')}</div></div>
+  <div class="card"><div class="cardHead"><div><h3>Management notes</h3><p>*Gross profit is estimated from product cost at the time of reporting. A production-grade version should store cost layers/COGS per sale.</p></div></div></div>`;
+}
+
+/* ---------------- STAFF ACCOUNTS ---------------- */
+function usersView(){
+  const roles=me.role==='owner' ? ['manager','inventory','cashier','owner'] : ['manager','inventory','cashier'];
+  return `<div class="card"><div class="cardHead"><div><h3>Staff accounts</h3><p>Create separate logins for managers, main store operators and cashiers. Each login only ever sees this business.</p></div></div>
+  <div class="tableWrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Assigned location</th><th></th></tr></thead><tbody>${cache.members.map(u=>`<tr><td>${esc(u.name)}</td><td class="mono">${esc(u.username||'(owner login)')}</td><td>${roleName(u.role)}</td><td>${esc(shopObj(u.shop_id)?.name||'All locations')}</td><td>${u.id!==me.id?`<button class="btn small" onclick="editMember('${u.id}')">Edit</button> <button class="btn small danger" onclick="deleteMember('${u.id}')">Remove</button>`:'<span class="muted">You</span>'}</td></tr>`).join('')}</tbody></table></div></div>
+  <div class="card"><div class="cardHead"><div><h3>Add staff account</h3><p>They'll sign in with the username and password you set here — no email needed.</p></div></div>
+  <form id="memberForm" class="formGrid"><div class="field"><label>Full name</label><input id="mn" required></div><div class="field"><label>Username</label><input id="mu" required></div><div class="field"><label>Password</label><input id="mp" type="password" required minlength="6"></div><div class="field"><label>Role</label><select id="mr">${roles.map(r=>`<option value="${r}">${roleName(r)}</option>`).join('')}</select></div><div class="field" id="memberShopField"><label>Assigned shop (cashiers only)</label><select id="ms">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><button class="btn primary">Create account</button></form></div>`;
+}
+function bindMemberForm(){
+  const f=document.getElementById('memberForm'); if(f) f.addEventListener('submit', addMember);
+}
+async function addMember(e){
+  e.preventDefault();
+  const name=document.getElementById('mn').value.trim();
+  const username=document.getElementById('mu').value.trim().toLowerCase().replace(/\s+/g,'');
+  const password=document.getElementById('mp').value;
+  const role=document.getElementById('mr').value;
+  const shopId=document.getElementById('ms').value;
+  if(cache.members.some(u=>(u.username||'').toLowerCase()===username)){ toast('That username is already used in this business.'); return; }
+  const syntheticEmail=`${username}.${me.business_id.slice(0,8)}@staff.local`;
+  const tempSb=window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {auth:{persistSession:false, autoRefreshToken:false, storageKey:'sb-temp-'+Date.now()}});
+  const {data:signData, error:signErr}=await tempSb.auth.signUp({email:syntheticEmail, password});
+  if(signErr){ toast(signErr.message.includes('registered')?'That username is already taken.':signErr.message); return; }
+  const row={business_id:me.business_id, auth_user_id:signData.user.id, name, username, role, shop_id: role==='cashier'?shopId:null, theme:'light'};
+  const {data:member, error:memErr}=await sb.from('members').insert(row).select().single();
+  if(memErr){ toast(memErr.message); return; }
+  await sb.from('username_directory').insert({username, email:syntheticEmail, business_id:me.business_id});
+  cache.members.push(member);
+  await logActivity('staff','Staff account created: '+name+' ('+roleName(role)+')');
+  renderView(); toast('Account created — share the username and password with '+name+'.');
+}
+function editMember(id){
+  const u=cache.members.find(x=>x.id===id);
+  document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead"><h3>Edit staff account</h3><button class="btn" onclick="closeModal()">✕</button></div><form id="editMemberForm"><div class="formGrid"><div class="field"><label>Name</label><input id="eun" value="${esc(u.name)}" required></div><div class="field"><label>Role</label><select id="eur">${['manager','inventory','cashier'].map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${roleName(r)}</option>`).join('')}</select></div><div class="field"><label>Assigned shop</label><select id="eus"><option value="">All locations</option>${cache.shops.map(s=>`<option value="${s.id}" ${u.shop_id===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div></div><p class="muted small" style="margin-top:10px">To change a password, remove this account and create it again.</p><button class="btn primary" style="margin-top:14px">Save changes</button></form></div>`;
+  document.getElementById('modal').classList.remove('hidden');
+  document.getElementById('editMemberForm').addEventListener('submit', (e)=>saveMember(e,id));
+}
+async function saveMember(e,id){
+  e.preventDefault();
+  const u=cache.members.find(x=>x.id===id);
+  const patch={name:document.getElementById('eun').value.trim(), role:document.getElementById('eur').value, shop_id:document.getElementById('eus').value||null};
+  const {error}=await sb.from('members').update(patch).eq('id',id);
+  if(error){ toast(error.message); return; }
+  Object.assign(u,patch); closeModal(); renderView(); toast('Account updated');
+}
+async function deleteMember(id){
+  if(!confirm('Remove this staff account? They will no longer be able to sign in.')) return;
+  const u=cache.members.find(x=>x.id===id);
+  await sb.from('members').delete().eq('id',id);
+  if(u?.username) await sb.from('username_directory').delete().eq('username',u.username);
+  cache.members=cache.members.filter(x=>x.id!==id);
+  renderView();
+}
+
+/* ---------------- SETTINGS ---------------- */
+function settingsView(){
+  return `<div class="card"><div class="cardHead"><div><h3>Business identity</h3><p>Shown across the app, receipts and printed reports.</p></div></div>
+  <form id="settingsForm"><div class="formGrid"><div class="field"><label>Business name</label><input id="bn" value="${esc(business.name)}" required></div><div class="field"><label>Short name / initials</label><input id="bs" maxlength="5" value="${esc(business.short)}"></div><div class="field"><label>Currency</label><input id="bc" value="${esc(business.currency)}"></div><div class="field"><label>Default tax %</label><input id="bt" type="number" min="0" value="${business.tax}"></div><div class="field"><label>Low stock threshold</label><input id="bl" type="number" min="0" value="${business.low_stock}"></div><div class="field"><label>Phone</label><input id="bph" value="${esc(business.phone)}"></div><div class="field"><label>Email</label><input id="bem" value="${esc(business.email)}"></div><div class="field"><label>Address</label><input id="bad" value="${esc(business.address)}"></div><div class="field" style="grid-column:1/-1"><label>Receipt footer</label><input id="brf" value="${esc(business.receipt_footer)}"></div></div><button class="btn primary" style="margin-top:16px">Save settings</button></form></div>
+  <div class="card"><div class="cardHead"><div><h3>Product categories</h3><p>Add categories that fit your business.</p></div></div><div class="actions">${cache.categories.map(c=>`<span class="tag ok">${esc(c.name)}</span>`).join('')}</div>
+  <form id="categoryForm" class="formActions" style="margin-top:14px"><div class="field" style="flex:1"><label>New category</label><input id="newcat" required></div><button class="btn">＋ Add</button></form></div>
+  <div class="card"><div class="cardHead"><div><h3>Appearance</h3><p>Dark mode applies instantly and is remembered for your account.</p></div></div><button class="btn" onclick="toggleTheme()">Toggle dark / light mode</button></div>
+  <div class="card"><div class="cardHead"><div><h3>About this deployment</h3></div></div><div class="notice">This edition stores everything in your own Supabase project (Postgres + Auth), so it works from any device and supports many independent businesses safely behind row-level security. See DEPLOY_INSTRUCTIONS.md for hosting steps.</div></div>`;
+}
+function bindSettingsForm(){
+  const f=document.getElementById('settingsForm'); if(f) f.addEventListener('submit', saveSettings);
+  const c=document.getElementById('categoryForm'); if(c) c.addEventListener('submit', addCategory);
+}
+async function saveSettings(e){
+  e.preventDefault();
+  const patch={name:document.getElementById('bn').value.trim(), short:document.getElementById('bs').value.trim(), currency:document.getElementById('bc').value.trim(), tax:Number(document.getElementById('bt').value)||0, low_stock:Number(document.getElementById('bl').value)||0, phone:document.getElementById('bph').value.trim(), email:document.getElementById('bem').value.trim(), address:document.getElementById('bad').value.trim(), receipt_footer:document.getElementById('brf').value.trim()};
+  const {error}=await sb.from('businesses').update(patch).eq('id',business.id);
+  if(error){ toast(error.message); return; }
+  Object.assign(business,patch); render(); toast('Settings saved');
+}
+async function addCategory(e){
+  e.preventDefault();
+  const name=document.getElementById('newcat').value.trim(); if(!name) return;
+  const {data,error}=await sb.from('categories').insert({business_id:me.business_id,name}).select().single();
+  if(error){ toast(error.message.includes('duplicate')?'That category already exists.':error.message); return; }
+  cache.categories.push(data); renderView();
+}
+function myStockView(){ storeFilter=me.shop_id; return inventoryView(); }
+
+/* ---------------- wire up per-view form bindings after each render ---------------- */
+const _origBind=bindViewEvents;
+bindViewEvents=function(){
+  _origBind();
+  bindAdjForm(); bindStoresForm(); bindTransferForm(); bindPurchaseForm(); bindExpenseForm(); bindMemberForm(); bindSettingsForm(); bindPosEvents();
+};
+
+boot();
+</script>
+</body>
+</html>
