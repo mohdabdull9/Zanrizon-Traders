@@ -161,8 +161,34 @@ tr:last-child td{border-bottom:0}
 @keyframes slideIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-@media(max-width:1000px){.side{width:74px}.brand>div:last-child,.nav button span:last-child,.sideBottom button span:last-child{display:none}.brand{justify-content:center}.g6{grid-template-columns:repeat(3,1fr)}.posGrid{grid-template-columns:1fr}.topSearch{max-width:360px}}
-@media(max-width:700px){.login{grid-template-columns:1fr}.loginHero{display:none}.content{padding:15px}.top{padding:0 12px}.g2,.g3,.g4,.g6{grid-template-columns:1fr 1fr}.topSearch{display:none}.cartLine{grid-template-columns:1fr 55px 85px 30px}}
+.hamburger{display:inline-flex;border:0;background:none;color:var(--text);font-size:20px;padding:6px 10px;border-radius:8px;cursor:pointer}
+.hamburger:hover{background:rgba(128,128,128,.12)}
+.side{overflow-y:auto}
+.side.collapsed{width:74px}
+.side.collapsed .brand>div:last-child,.side.collapsed .nav button span:last-child,.side.collapsed .sideBottom button span:last-child{display:none}
+.side.collapsed .brand{justify-content:center}
+.sideOverlay{display:none}
+
+@media(max-width:1000px){.g6{grid-template-columns:repeat(3,1fr)}.posGrid{grid-template-columns:1fr}.topSearch{max-width:360px}}
+@media(max-width:900px){
+  .side{position:fixed;left:-260px;top:0;bottom:0;z-index:50;transition:left .22s ease;width:245px!important;box-shadow:0 0 30px rgba(0,0,0,.3)}
+  .side.mobileOpen{left:0}
+  .side.collapsed{width:245px!important}
+  .side.collapsed .brand>div:last-child,.side.collapsed .nav button span:last-child,.side.collapsed .sideBottom button span:last-child{display:block}
+  .side.collapsed .brand{justify-content:flex-start}
+  .sideOverlay.show{display:block;position:fixed;inset:0;background:rgba(10,18,30,.5);z-index:45}
+  .main{width:100%}
+}
+@media(max-width:700px){.login{grid-template-columns:1fr}.loginHero{display:none}.content{padding:12px}.top{padding:0 10px}.g2,.g3,.g4,.g6{grid-template-columns:1fr 1fr}.topSearch{display:none}
+  .posGrid{grid-template-columns:1fr}
+  .cartLine{grid-template-columns:1fr;gap:4px;padding:11px 0}
+  .cartLine>*{width:100%}
+  .formGrid{grid-template-columns:1fr}
+  .kpi .value{font-size:20px}
+  table{min-width:600px}
+  .pageHead h1{font-size:20px}
+}
+@media(max-width:480px){.g2,.g3,.g4,.g6{grid-template-columns:1fr}}
 @media print{.side,.top,.noPrint{display:none!important}.content{padding:0}.card{box-shadow:none;border:0}.receipt{max-width:none}.modalBack{position:static;background:#fff;padding:0}}
 </style>
 </head>
@@ -183,6 +209,22 @@ const sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANO
 let session=null, me=null, business=null, view='login', authMode='login';
 let cache={shops:[],categories:[],products:[],stock:{},sales:[],saleLines:[],purchases:[],transfers:[],adjustments:[],expenses:[],activity:[],members:[]};
 let storeFilter='all', search='', cart=[], editing=null, scanner=null, registerBusy=false;
+let reportMonth=new Date().getMonth()+1, reportYear=new Date().getFullYear();
+let sidebarCollapsed=localStorage.getItem('ubm_sidebar_collapsed')==='1';
+let mobileSidebarOpen=false;
+function toggleSidebar(){
+  if(window.innerWidth<=900){ mobileSidebarOpen=!mobileSidebarOpen; }
+  else { sidebarCollapsed=!sidebarCollapsed; localStorage.setItem('ubm_sidebar_collapsed', sidebarCollapsed?'1':'0'); }
+  applySidebarState();
+}
+function applySidebarState(){
+  const side=document.querySelector('.side'), overlay=document.getElementById('sideOverlay');
+  if(!side) return;
+  side.classList.toggle('collapsed', sidebarCollapsed && window.innerWidth>900);
+  side.classList.toggle('mobileOpen', mobileSidebarOpen && window.innerWidth<=900);
+  if(overlay) overlay.classList.toggle('show', mobileSidebarOpen && window.innerWidth<=900);
+}
+function closeMobileSidebar(){ if(window.innerWidth<=900){ mobileSidebarOpen=false; applySidebarState(); } }
 
 /* ---------------- generic helpers ---------------- */
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -192,7 +234,8 @@ function timeNow(){return new Date().toLocaleTimeString([], {hour:'2-digit',minu
 function roleName(r){return {owner:'Owner',manager:'Manager',inventory:'Main Store Operator',cashier:'Cashier'}[r]||r}
 function can(r){return me&&(me.role==='owner'||me.role===r||(me.role==='manager'&&['inventory','cashier'].includes(r)))}
 function makeBarcode(){return '2'+Date.now().toString().slice(-9)+Math.floor(Math.random()*10)}
-function product(codeOrBarcode){return cache.products.find(p=>p.code===codeOrBarcode||p.barcode===codeOrBarcode)}
+function norm(s){return String(s??'').trim().replace(/\s+/g,'').toLowerCase()}
+function product(codeOrBarcode){const v=norm(codeOrBarcode); if(!v) return null; return cache.products.find(p=>norm(p.code)===v||norm(p.barcode)===v)}
 function productById(id){return cache.products.find(p=>p.id===id)}
 function shopObj(id){return cache.shops.find(s=>s.id===id)}
 function stock(shopId,code){return Number(cache.stock[shopId]?.[code]||0)}
@@ -309,6 +352,7 @@ function render(){
   const root=document.getElementById('root');
   if(!session||!me){ root.innerHTML = view==='register' ? registerHtml() : loginHtml(); bindAuth(); return; }
   root.innerHTML = layout();
+  applySidebarState();
   renderView();
 }
 function loginHtml(){
@@ -353,10 +397,11 @@ function lowStockCount(){let n=0;cache.shops.forEach(st=>cache.products.forEach(
 function layout(){
   const dark=document.documentElement.getAttribute('data-theme')==='dark';
   return `<div class="app">
+  <div class="sideOverlay" id="sideOverlay" onclick="closeMobileSidebar()"></div>
   <aside class="side"><div class="brand"><div class="logo">${esc(business.short||'UB')}</div><div><b>${esc(business.name)}</b><small>${esc(roleName(me.role))}</small></div></div>
-  <div class="nav">${navItems().map(x=>`<button class="${view===x[0]?'active':''}" onclick="go('${x[0]}')"><span>${x[2]}</span><span>${x[1]}</span>${x[0]==='dashboard'&&lowStockCount()?`<span class="badge">${lowStockCount()}</span>`:''}</button>`).join('')}</div>
+  <div class="nav">${navItems().map(x=>`<button class="${view===x[0]?'active':''}" onclick="go('${x[0]}');closeMobileSidebar()"><span>${x[2]}</span><span>${x[1]}</span>${x[0]==='dashboard'&&lowStockCount()?`<span class="badge">${lowStockCount()}</span>`:''}</button>`).join('')}</div>
   <div class="sideBottom"><button onclick="logout()">⏻ <span>Log out</span></button></div></aside>
-  <main class="main"><header class="top"><div class="topSearch"><span>⌕</span><input value="${esc(search)}" oninput="globalSearch(this.value)" placeholder="Search products, barcode, sales, customers…"></div>
+  <main class="main"><header class="top"><button class="hamburger" onclick="toggleSidebar()" title="Show/hide menu">☰</button><div class="topSearch"><span>⌕</span><input value="${esc(search)}" oninput="globalSearch(this.value)" placeholder="Search products, barcode, sales, customers…"></div>
   <div class="user"><button class="themeBtn" onclick="toggleTheme()" title="Toggle dark mode">${dark?'☀️':'🌙'}</button><div><b>${esc(me.name)}</b><div class="muted" style="font-size:11px">${esc(roleName(me.role))}${me.shop_id?' · '+esc(shopObj(me.shop_id)?.name||''):''}</div></div><div class="avatar">${esc((me.name||'U').slice(0,1).toUpperCase())}</div></div></header>
   <section class="content" id="content"></section></main></div>`;
 }
@@ -547,9 +592,10 @@ function bindPosEvents(){
   const psi=document.getElementById('posSearchInput'); if(psi) psi.addEventListener('input',()=>{document.getElementById('posProducts').innerHTML=posProducts(psi.value)});
 }
 function scanLookup(value){
+  value=String(value||'').trim();
   if(!value) return;
   const p=product(value) || cache.products.find(x=>(x.name+' '+x.code).toLowerCase().includes(value.toLowerCase()));
-  if(!p){ toast('No product matches "'+value+'"'); return; }
+  if(!p){ toast('No product matches "'+value+'" — check the barcode is registered under Products.'); return; }
   openScanConfirm(p);
 }
 function openScanConfirm(p){
@@ -599,19 +645,39 @@ function showReceipt(s, lines){
 
 /* ---- Camera barcode scanning (html5-qrcode) ---- */
 function openCameraModal(){
-  document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead"><div><h3>Camera barcode scanner</h3><p>Point the camera at a printed barcode. Allow camera access if prompted.</p></div><button class="btn" onclick="closeModal()">✕</button></div><div id="reader" style="width:100%;min-height:260px"></div><div id="cameraStatus" class="muted" style="margin-top:10px;text-align:center">Starting camera…</div></div>`;
+  document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead"><div><h3>Camera barcode scanner</h3><p>Point the camera at a printed barcode. Allow camera access if prompted.</p></div><button class="btn" onclick="closeModal()">✕</button></div><div id="reader" style="width:100%;min-height:260px"></div><div id="cameraStatus" class="muted" style="margin-top:10px;text-align:center">Starting camera…</div>
+  <form id="manualScanForm" class="searchLine" style="margin-top:14px"><input id="manualScanInput" placeholder="Camera not working? Type the barcode/SKU here"><button class="btn">Look up</button></form></div>`;
   document.getElementById('modal').classList.remove('hidden');
+  const mf=document.getElementById('manualScanForm');
+  mf.addEventListener('submit',(e)=>{ e.preventDefault(); const v=document.getElementById('manualScanInput').value.trim(); if(v){ stopCameraScan(); closeModal(); scanLookup(v); } });
   startCameraScan();
 }
 function startCameraScan(){
   if(!window.Html5Qrcode){ document.getElementById('cameraStatus').textContent='Camera scanner library failed to load.'; return; }
   if(scanner) return;
-  scanner=new Html5Qrcode('reader');
-  scanner.start({facingMode:'environment'}, {fps:10, qrbox:230},
-    (decodedText)=>{ stopCameraScan(); closeModal(); scanLookup(decodedText); },
-    ()=>{ /* per-frame decode miss - ignore */ }
-  ).then(()=>{ const st=document.getElementById('cameraStatus'); if(st) st.textContent='Scanning… hold the barcode steady in the frame.'; })
-   .catch(()=>{ const st=document.getElementById('cameraStatus'); if(st) st.textContent='Camera unavailable — check permissions, or use a USB scanner / type the code manually.'; });
+  let fired=false;
+  scanner=new Html5Qrcode('reader', {
+    formatsToSupport:[
+      Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E, Html5QrcodeSupportedFormats.CODE_39,
+      Html5QrcodeSupportedFormats.QR_CODE
+    ],
+    verbose:false
+  });
+  const onDecode=(decodedText)=>{
+    if(fired) return; fired=true;
+    const st=document.getElementById('cameraStatus'); if(st) st.textContent='Detected: '+decodedText;
+    stopCameraScan(); closeModal(); scanLookup(decodedText);
+  };
+  const tryStart=(constraints)=>scanner.start(constraints, {fps:12, qrbox:{width:260,height:160}}, onDecode, ()=>{});
+  tryStart({facingMode:{ideal:'environment'}})
+    .then(()=>{ const st=document.getElementById('cameraStatus'); if(st) st.textContent='Scanning… hold the barcode flat and steady in the frame.'; })
+    .catch(()=>{
+      // fall back to any available camera (some laptops/tablets have no "environment" camera)
+      tryStart({facingMode:'user'})
+        .then(()=>{ const st=document.getElementById('cameraStatus'); if(st) st.textContent='Scanning with front camera… hold the barcode steady.'; })
+        .catch(()=>{ const st=document.getElementById('cameraStatus'); if(st) st.textContent='Camera unavailable — check browser permissions (padlock icon in the address bar), or type the code manually below.'; });
+    });
 }
 function stopCameraScan(){
   if(scanner){ scanner.stop().then(()=>scanner.clear()).catch(()=>{}); scanner=null; }
@@ -644,12 +710,63 @@ async function addExpense(e){
 }
 
 /* ---------------- REPORTS ---------------- */
+function monthName(m){return ['January','February','March','April','May','June','July','August','September','October','November','December'][m-1]}
+function salesInRange(fromDate,toDate){return cache.sales.filter(s=>s.date>=fromDate && s.date<=toDate)}
+function salesInMonth(y,m){const from=`${y}-${String(m).padStart(2,'0')}-01`; const to=`${y}-${String(m).padStart(2,'0')}-31`; return salesInRange(from,to)}
+function salesInYear(y){return salesInRange(`${y}-01-01`,`${y}-12-31`)}
+function bestSellers(salesList,limit=10){
+  const saleIds=new Set(salesList.map(s=>s.id));
+  const lines=cache.saleLines.filter(l=>saleIds.has(l.sale_id));
+  const byCode={};
+  lines.forEach(l=>{ byCode[l.code]=byCode[l.code]||{code:l.code,name:l.name,qty:0,revenue:0}; byCode[l.code].qty+=Number(l.qty); byCode[l.code].revenue+=Number(l.qty)*Number(l.price); });
+  return Object.values(byCode).sort((a,b)=>b.qty-a.qty).slice(0,limit);
+}
+function reportSummary(salesList){
+  const saleIds=new Set(salesList.map(s=>s.id));
+  const lines=cache.saleLines.filter(l=>saleIds.has(l.sale_id));
+  const rev=salesList.reduce((a,s)=>a+Number(s.total),0);
+  const gross=lines.reduce((a,l)=>a+Number(l.qty)*(Number(l.price)-(productById(l.product_id)?.cost||0)),0);
+  return {rev,gross,count:salesList.length};
+}
+function lowStockRows(){
+  const rows=[];
+  cache.shops.forEach(st=>cache.products.forEach(p=>{ const q=stock(st.id,p.code); if(q<=business.low_stock) rows.push({shop:st.name,name:p.name,code:p.code,qty:q}); }));
+  return rows.sort((a,b)=>a.qty-b.qty);
+}
+function setReportPeriod(field,val){ if(field==='month') reportMonth=Number(val); else reportYear=Number(val); renderView(); }
 function reportsView(){
-  const sales=cache.sales, rev=sales.reduce((a,s)=>a+Number(s.total),0), expenses=cache.expenses.reduce((a,e)=>a+Number(e.amount),0), purchaseTotal=cache.purchases.reduce((a,p)=>a+Number(p.qty)*Number(p.cost),0);
-  const gross=cache.saleLines.reduce((a,l)=>a+Number(l.qty)*(Number(l.price)-(productById(l.product_id)?.cost||0)),0);
-  return `<div class="grid g4"><div class="kpi"><div class="label">Revenue</div><div class="value">${money(rev)}</div></div><div class="kpi"><div class="label">Gross profit*</div><div class="value ok">${money(gross)}</div></div><div class="kpi"><div class="label">Purchases</div><div class="value">${money(purchaseTotal)}</div></div><div class="kpi"><div class="label">Expenses</div><div class="value bad">${money(expenses)}</div></div></div>
-  <div class="grid g2"><div class="card"><div class="cardHead"><div><h3>Sales by location</h3><p>All recorded sales</p></div></div>${cache.shops.map(s=>{const x=sales.filter(a=>a.shop_id===s.id).reduce((a,b)=>a+Number(b.total),0);return `<div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line)"><span>${esc(s.name)}</span><b>${money(x)}</b></div>`}).join('')}</div>
-  <div class="card"><div class="cardHead"><div><h3>Payment mix</h3></div></div>${['Cash','Mobile Money','Card','Bank','Credit'].map(pm=>{const x=sales.filter(s=>s.payment===pm).reduce((a,b)=>a+Number(b.total),0);return `<div style="display:flex;justify-content:space-between;padding:10px 0"><span>${pm}</span><b>${money(x)}</b></div>`}).join('')}</div></div>
+  const monthSales=salesInMonth(reportYear,reportMonth), yearSales=salesInYear(reportYear);
+  const monthSum=reportSummary(monthSales), yearSum=reportSummary(yearSales);
+  const monthExpenses=cache.expenses.filter(e=>e.date>=`${reportYear}-${String(reportMonth).padStart(2,'0')}-01`&&e.date<=`${reportYear}-${String(reportMonth).padStart(2,'0')}-31`).reduce((a,e)=>a+Number(e.amount),0);
+  const monthTop=bestSellers(monthSales,8), yearTop=bestSellers(yearSales,8);
+  const low=lowStockRows();
+  const yearsAvailable=[...new Set(cache.sales.map(s=>Number(s.date.slice(0,4))))]; if(!yearsAvailable.includes(reportYear)) yearsAvailable.push(reportYear); yearsAvailable.sort();
+  return `<div class="card noPrint"><div class="cardHead"><div><h3>Report period</h3><p>Choose the month and year to report on. Printing includes everything below.</p></div></div>
+  <div class="formGrid"><div class="field"><label>Month</label><select onchange="setReportPeriod('month',this.value)">${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===reportMonth?'selected':''}>${monthName(m)}</option>`).join('')}</select></div>
+  <div class="field"><label>Year</label><select onchange="setReportPeriod('year',this.value)">${yearsAvailable.map(y=>`<option value="${y}" ${y===reportYear?'selected':''}>${y}</option>`).join('')}</select></div></div></div>
+
+  <div class="card"><div class="cardHead"><div><h3>${monthName(reportMonth)} ${reportYear} — Monthly Report</h3><p>Revenue, profit and expenses for the selected month</p></div></div>
+  <div class="grid g4"><div class="kpi"><div class="label">Revenue</div><div class="value">${money(monthSum.rev)}</div><div class="sub">${monthSum.count} transaction(s)</div></div>
+  <div class="kpi"><div class="label">Gross profit*</div><div class="value ok">${money(monthSum.gross)}</div></div>
+  <div class="kpi"><div class="label">Expenses</div><div class="value bad">${money(monthExpenses)}</div></div>
+  <div class="kpi"><div class="label">Net (rev − exp)</div><div class="value">${money(monthSum.rev-monthExpenses)}</div></div></div></div>
+
+  <div class="grid g2">
+  <div class="card"><div class="cardHead"><div><h3>Best-selling products — ${monthName(reportMonth)} ${reportYear}</h3><p>Ranked by units sold this month</p></div></div>
+  ${monthTop.length?`<div class="tableWrap"><table><thead><tr><th>#</th><th>Product</th><th>Units sold</th><th>Revenue</th></tr></thead><tbody>${monthTop.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.name)}</td><td class="num">${x.qty}</td><td>${money(x.revenue)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">No sales recorded this month.</p>'}</div>
+
+  <div class="card"><div class="cardHead"><div><h3>Best-selling products — ${reportYear} (year to date)</h3><p>Ranked by units sold across the whole year</p></div></div>
+  ${yearTop.length?`<div class="tableWrap"><table><thead><tr><th>#</th><th>Product</th><th>Units sold</th><th>Revenue</th></tr></thead><tbody>${yearTop.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.name)}</td><td class="num">${x.qty}</td><td>${money(x.revenue)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">No sales recorded this year.</p>'}</div>
+  </div>
+
+  <div class="card"><div class="cardHead"><div><h3>${reportYear} — Yearly Summary</h3></div></div>
+  <div class="grid g3"><div class="kpi"><div class="label">Revenue (year)</div><div class="value">${money(yearSum.rev)}</div></div><div class="kpi"><div class="label">Gross profit (year)*</div><div class="value ok">${money(yearSum.gross)}</div></div><div class="kpi"><div class="label">Transactions (year)</div><div class="value">${yearSum.count}</div></div></div>
+  <div style="margin-top:14px">${Array.from({length:12},(_,i)=>i+1).map(m=>{const s=reportSummary(salesInMonth(reportYear,m));return `<div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line)"><span>${monthName(m)}</span><b>${money(s.rev)}</b></div>`}).join('')}</div></div>
+
+  <div class="card"><div class="cardHead"><div><h3>Low stock report</h3><p>Every product at or below the low-stock threshold (${business.low_stock} units), across all locations — current snapshot</p></div></div>
+  ${low.length?`<div class="tableWrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Location</th><th>Qty left</th><th>Status</th></tr></thead><tbody>${low.map(r=>`<tr><td>${esc(r.name)}</td><td class="mono">${esc(r.code)}</td><td>${esc(r.shop)}</td><td class="num">${r.qty}</td><td>${statusTag(r.qty)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">Everything is sufficiently stocked.</p>'}</div>
+
+  <div class="card"><div class="cardHead"><div><h3>Sales by location</h3><p>All-time, all recorded sales</p></div></div>${cache.shops.map(s=>{const x=cache.sales.filter(a=>a.shop_id===s.id).reduce((a,b)=>a+Number(b.total),0);return `<div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line)"><span>${esc(s.name)}</span><b>${money(x)}</b></div>`}).join('')}</div>
   <div class="card"><div class="cardHead"><div><h3>Management notes</h3><p>*Gross profit is estimated from product cost at the time of reporting. A production-grade version should store cost layers/COGS per sale.</p></div></div></div>`;
 }
 
