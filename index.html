@@ -102,11 +102,11 @@ button{cursor:pointer}
 .cardHead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:15px;flex-wrap:wrap}
 .cardHead h3{margin:0;font-size:16px}
 .cardHead p{margin:4px 0 0;color:var(--muted);font-size:12px}
-.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow);transition:transform .15s}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow);transition:transform .15s;overflow:hidden;min-width:0}
 .kpi:hover{transform:translateY(-2px)}
-.kpi .label{font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:800;letter-spacing:.04em}
-.kpi .value{font-size:25px;font-weight:850;margin-top:8px;color:var(--primary)}
-.kpi .sub{font-size:11px;color:var(--muted);margin-top:5px}
+.kpi .label{font-size:11px;color:var(--muted);text-transform:uppercase;font-weight:800;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .value{font-size:clamp(15px,2.4vw,25px);font-weight:850;margin-top:8px;color:var(--primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .sub{font-size:11px;color:var(--muted);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ok{color:var(--ok)!important}.bad{color:var(--danger)!important}.warn{color:var(--warn)!important}
 
 .tableWrap{overflow:auto}
@@ -184,12 +184,22 @@ tr:last-child td{border-bottom:0}
   .cartLine{grid-template-columns:1fr;gap:4px;padding:11px 0}
   .cartLine>*{width:100%}
   .formGrid{grid-template-columns:1fr}
-  .kpi .value{font-size:20px}
   table{min-width:600px}
   .pageHead h1{font-size:20px}
 }
 @media(max-width:480px){.g2,.g3,.g4,.g6{grid-template-columns:1fr}}
-@media print{.side,.top,.noPrint{display:none!important}.content{padding:0}.card{box-shadow:none;border:0}.receipt{max-width:none}.modalBack{position:static;background:#fff;padding:0}}
+@media print{.side,.top,.noPrint{display:none!important}.content{padding:0}.card{box-shadow:none;border:0}.receipt{max-width:none}.modalBack{position:static;background:#fff;padding:0}
+  @page{size:A4;margin:10mm}
+  .modal{box-shadow:none;max-height:none;overflow:visible;width:100%}
+}
+.labelSheet{display:grid;gap:4mm;margin-top:14px}
+.labelSheet.cols2{grid-template-columns:repeat(2,1fr)}
+.labelSheet.cols3{grid-template-columns:repeat(3,1fr)}
+.labelSheet.cols4{grid-template-columns:repeat(4,1fr)}
+.label{border:1px dashed #999;border-radius:4px;padding:3mm 2mm;text-align:center;page-break-inside:avoid;break-inside:avoid;background:#fff}
+.label .labelName{font-size:11px;font-weight:700;color:#111;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.label .labelPrice{font-size:10px;color:#333}
+.label .barcode-svg{max-width:100%}
 </style>
 </head>
 <body>
@@ -209,7 +219,7 @@ const sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANO
 let session=null, me=null, business=null, view='login', authMode='login';
 let cache={shops:[],categories:[],products:[],stock:{},sales:[],saleLines:[],purchases:[],transfers:[],adjustments:[],expenses:[],activity:[],members:[]};
 let storeFilter='all', search='', cart=[], editing=null, scanner=null, registerBusy=false;
-let reportMonth=new Date().getMonth()+1, reportYear=new Date().getFullYear();
+let reportMonth=new Date().getMonth()+1, reportYear=new Date().getFullYear(), reportShop='all';
 let sidebarCollapsed=localStorage.getItem('ubm_sidebar_collapsed')==='1';
 let mobileSidebarOpen=false;
 function toggleSidebar(){
@@ -389,7 +399,7 @@ function bindAuth(){
 }
 
 function navItems(){
-  if(me.role==='cashier') return [['dashboard','Dashboard','▦'],['pos','Point of Sale','▣'],['myStock','My Stock','▤'],['sales','Sales History','◷']];
+  if(me.role==='cashier') return [['dashboard','Dashboard','▦'],['pos','Point of Sale','▣'],['myStock','My Stock','▤'],['transfers','Transfers','⇄'],['sales','Sales History','◷']];
   if(me.role==='inventory') return [['dashboard','Dashboard','▦'],['products','Products &amp; Barcodes','◈'],['inventory','Inventory','▤'],['transfers','Transfers','⇄'],['purchases','Purchases','＋']];
   return [['dashboard','Dashboard','▦'],['pos','Point of Sale','▣'],['products','Products &amp; Barcodes','◈'],['inventory','Inventory','▤'],['stores','Stores / Shops','⌂'],['transfers','Transfers','⇄'],['purchases','Purchases','＋'],['sales','Sales','◷'],['expenses','Expenses','−'],['reports','Reports','▥'],['users','Staff Accounts','♙'],['settings','Settings','⚙']];
 }
@@ -415,7 +425,7 @@ function renderView(){
 }
 function renderBarcodes(){
   document.querySelectorAll('.barcode-svg').forEach(el=>{
-    try{ JsBarcode(el, el.dataset.barcode, {format:'CODE128', displayValue:true, height:44, width:1.8, margin:6, fontSize:12}); }catch(e){}
+    try{ JsBarcode(el, el.dataset.barcode, {format:'CODE128', displayValue:true, height:Number(el.dataset.height)||44, width:Number(el.dataset.width)||1.8, margin:Number(el.dataset.margin)||6, fontSize:Number(el.dataset.fontsize)||12}); }catch(e){}
   });
 }
 function bindViewEvents(){
@@ -471,7 +481,17 @@ async function saveProduct(e){
 function closeModal(){document.getElementById('modal').classList.add('hidden');document.getElementById('modal').innerHTML='';editing=null;stopCameraScan()}
 function printBarcode(code){
   const p=product(code);
-  document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead noPrint"><h3>Barcode label</h3><button class="btn" onclick="closeModal()">✕</button></div><div style="text-align:center;padding:20px"><h2>${esc(p.name)}</h2><svg class="barcode-svg" data-barcode="${esc(p.barcode)}"></svg><div class="mono">${esc(p.code)} · ${money(p.price)}</div></div><div class="actions noPrint"><button class="btn primary" onclick="window.print()">Print label</button></div></div>`;
+  document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead"><div><h3>Print barcode labels</h3><p>Choose how many copies to print — one per physical item you want to tag.</p></div><button class="btn" onclick="closeModal()">✕</button></div>
+  <div style="text-align:center;padding:10px 0 20px"><h3 style="margin:0 0 6px">${esc(p.name)}</h3><svg class="barcode-svg" data-barcode="${esc(p.barcode)}" data-width="2.4" data-height="60" data-fontsize="14"></svg><div class="mono">${esc(p.code)} · ${money(p.price)}</div></div>
+  <form id="labelCountForm" class="formGrid"><div class="field"><label>Number of labels</label><input id="labelCount" type="number" min="1" max="500" value="10" required></div><div class="field"><label>Labels per row</label><select id="labelCols"><option value="2">2 (large)</option><option value="3" selected>3 (medium)</option><option value="4">4 (small)</option></select></div><div class="field"><button class="btn primary wide" type="submit">Generate &amp; Print</button></div></form></div>`;
+  document.getElementById('modal').classList.remove('hidden'); renderBarcodes();
+  document.getElementById('labelCountForm').addEventListener('submit',(e)=>{ e.preventDefault(); const n=Math.max(1,Math.min(500,Number(document.getElementById('labelCount').value)||1)); const cols=document.getElementById('labelCols').value; printLabelSheet(p,n,cols); });
+}
+function printLabelSheet(p,count,cols){
+  const labels=Array.from({length:count}).map(()=>`<div class="label"><div class="labelName">${esc(p.name)}</div><svg class="barcode-svg" data-barcode="${esc(p.barcode)}" data-width="2.2" data-height="50" data-fontsize="13" data-margin="4"></svg><div class="labelPrice mono">${esc(p.code)} · ${money(p.price)}</div></div>`).join('');
+  document.getElementById('modal').innerHTML=`<div class="modal" style="max-width:900px"><div class="cardHead noPrint"><div><h3>${count} label(s) — ${esc(p.name)}</h3><p>If barcodes don't scan, set your browser's print scale to 100% and disable "fit to page".</p></div><button class="btn" onclick="closeModal()">✕</button></div>
+  <div class="labelSheet cols${cols}">${labels}</div>
+  <div class="actions noPrint" style="margin-top:14px"><button class="btn primary" onclick="window.print()">Print sheet</button></div></div>`;
   document.getElementById('modal').classList.remove('hidden'); renderBarcodes();
 }
 
@@ -531,21 +551,28 @@ async function deleteStore(sid){
 
 /* ---------------- TRANSFERS ---------------- */
 function transfersView(){
-  return `<div class="card"><div class="cardHead"><div><h3>Transfer stock</h3><p>Move inventory between any two locations with an audit trail.</p></div></div>
-  <form id="transferForm" class="formGrid"><div class="field"><label>From</label><select id="tf">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>To</label><select id="tt">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>Product / barcode</label><input id="tp" list="plist" required placeholder="Scan or type barcode / SKU"><datalist id="plist">${cache.products.map(p=>`<option value="${esc(p.barcode)}">${esc(p.name)}</option><option value="${esc(p.code)}">${esc(p.name)}</option>`).join('')}</datalist></div><div class="field"><label>Quantity</label><input id="tq" type="number" min="1" required></div><div class="field"><label>Reference / note</label><input id="tn"></div><button class="btn gold">⇄ Transfer</button></form></div>
-  <div class="card"><div class="tableWrap"><table><thead><tr><th>Date</th><th>From</th><th>To</th><th>Product</th><th>Qty</th><th>By</th><th>Note</th></tr></thead><tbody>${cache.transfers.slice(0,100).map(t=>`<tr><td>${t.date}</td><td>${esc(shopObj(t.from_shop)?.name)}</td><td>${esc(shopObj(t.to_shop)?.name)}</td><td>${esc(productById(t.product_id)?.name||'')}</td><td>${t.qty}</td><td>${esc(t.by_name)}</td><td>${esc(t.note||'')}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">No transfers.</td></tr>'}</tbody></table></div></div>`;
+  const locked=me.role==='cashier'; const myShop=shopObj(me.shop_id);
+  const list=locked ? cache.transfers.filter(t=>t.from_shop===me.shop_id||t.to_shop===me.shop_id) : cache.transfers;
+  return `<div class="card"><div class="cardHead"><div><h3>Transfer stock</h3><p>${locked?`Send stock from <b>${esc(myShop?.name||'your shop')}</b> to any other location, or receive into it.`:'Move inventory between any two locations with an audit trail.'}</p></div></div>
+  <form id="transferForm" class="formGrid">
+  <div class="field"><label>From</label>${locked?`<select id="tf" disabled><option value="${me.shop_id}">${esc(myShop?.name)}</option></select><input type="hidden" id="tfHidden" value="${me.shop_id}">`:`<select id="tf">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>`}</div>
+  <div class="field"><label>To</label><select id="tt">${cache.shops.filter(s=>!locked||s.id!==me.shop_id).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
+  <div class="field"><label>Product / barcode</label><input id="tp" list="plist" required placeholder="Scan or type barcode / SKU"><datalist id="plist">${cache.products.map(p=>`<option value="${esc(p.barcode)}">${esc(p.name)}</option><option value="${esc(p.code)}">${esc(p.name)}</option>`).join('')}</datalist></div>
+  <div class="field"><label>Quantity</label><input id="tq" type="number" min="1" required></div><div class="field"><label>Reference / note</label><input id="tn"></div><button class="btn gold">⇄ Transfer</button></form></div>
+  <div class="card"><div class="tableWrap"><table><thead><tr><th>Date</th><th>From</th><th>To</th><th>Product</th><th>Qty</th><th>By</th><th>Note</th></tr></thead><tbody>${list.slice(0,100).map(t=>`<tr><td>${t.date}</td><td>${esc(shopObj(t.from_shop)?.name)}</td><td>${esc(shopObj(t.to_shop)?.name)}</td><td>${esc(productById(t.product_id)?.name||'')}</td><td>${t.qty}</td><td>${esc(t.by_name)}</td><td>${esc(t.note||'')}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">No transfers.</td></tr>'}</tbody></table></div></div>`;
 }
 function bindTransferForm(){ const f=document.getElementById('transferForm'); if(f) f.addEventListener('submit', doTransfer); }
 async function doTransfer(e){
   e.preventDefault();
-  const from=document.getElementById('tf').value, to=document.getElementById('tt').value, input=document.getElementById('tp').value.trim(), p=product(input), q=Number(document.getElementById('tq').value);
+  const locked=me.role==='cashier';
+  const from=locked?me.shop_id:document.getElementById('tf').value, to=document.getElementById('tt').value, input=document.getElementById('tp').value.trim(), p=product(input), q=Number(document.getElementById('tq').value);
   if(from===to||!p||q<1||q>stock(from,p.code)){ toast('Check source, destination, product and available stock'); return; }
   setStockLocal(from,p.code,stock(from,p.code)-q); setStockLocal(to,p.code,stock(to,p.code)+q);
   await persistStock(from,p.code,stock(from,p.code)); await persistStock(to,p.code,stock(to,p.code));
   const {data}=await sb.from('transfers').insert({business_id:me.business_id,from_shop:from,to_shop:to,product_id:p.id,qty:q,note:document.getElementById('tn').value.trim(),by_name:me.name}).select().single();
   cache.transfers.unshift(data);
   await logActivity('transfer',`${q} × ${p.name} transferred from ${shopObj(from)?.name} to ${shopObj(to)?.name}`);
-  renderView(); toast('Transfer recorded');
+  renderView(); toast('Transfer recorded — stock updated at both locations');
 }
 
 /* ---------------- PURCHASES ---------------- */
@@ -711,7 +738,7 @@ async function addExpense(e){
 
 /* ---------------- REPORTS ---------------- */
 function monthName(m){return ['January','February','March','April','May','June','July','August','September','October','November','December'][m-1]}
-function salesInRange(fromDate,toDate){return cache.sales.filter(s=>s.date>=fromDate && s.date<=toDate)}
+function salesInRange(fromDate,toDate){return cache.sales.filter(s=>s.date>=fromDate && s.date<=toDate && (reportShop==='all'||s.shop_id===reportShop))}
 function salesInMonth(y,m){const from=`${y}-${String(m).padStart(2,'0')}-01`; const to=`${y}-${String(m).padStart(2,'0')}-31`; return salesInRange(from,to)}
 function salesInYear(y){return salesInRange(`${y}-01-01`,`${y}-12-31`)}
 function bestSellers(salesList,limit=10){
@@ -730,10 +757,10 @@ function reportSummary(salesList){
 }
 function lowStockRows(){
   const rows=[];
-  cache.shops.forEach(st=>cache.products.forEach(p=>{ const q=stock(st.id,p.code); if(q<=business.low_stock) rows.push({shop:st.name,name:p.name,code:p.code,qty:q}); }));
+  cache.shops.filter(st=>reportShop==='all'||st.id===reportShop).forEach(st=>cache.products.forEach(p=>{ const q=stock(st.id,p.code); if(q<=business.low_stock) rows.push({shop:st.name,name:p.name,code:p.code,qty:q}); }));
   return rows.sort((a,b)=>a.qty-b.qty);
 }
-function setReportPeriod(field,val){ if(field==='month') reportMonth=Number(val); else reportYear=Number(val); renderView(); }
+function setReportPeriod(field,val){ if(field==='month') reportMonth=Number(val); else if(field==='year') reportYear=Number(val); else reportShop=val; renderView(); }
 function reportsView(){
   const monthSales=salesInMonth(reportYear,reportMonth), yearSales=salesInYear(reportYear);
   const monthSum=reportSummary(monthSales), yearSum=reportSummary(yearSales);
@@ -741,9 +768,13 @@ function reportsView(){
   const monthTop=bestSellers(monthSales,8), yearTop=bestSellers(yearSales,8);
   const low=lowStockRows();
   const yearsAvailable=[...new Set(cache.sales.map(s=>Number(s.date.slice(0,4))))]; if(!yearsAvailable.includes(reportYear)) yearsAvailable.push(reportYear); yearsAvailable.sort();
-  return `<div class="card noPrint"><div class="cardHead"><div><h3>Report period</h3><p>Choose the month and year to report on. Printing includes everything below.</p></div></div>
+  return `<div class="card noPrint"><div class="cardHead"><div><h3>Report period</h3><p>Choose the month, year and (optionally) a single shop to report on. Printing includes everything below.</p></div></div>
   <div class="formGrid"><div class="field"><label>Month</label><select onchange="setReportPeriod('month',this.value)">${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===reportMonth?'selected':''}>${monthName(m)}</option>`).join('')}</select></div>
-  <div class="field"><label>Year</label><select onchange="setReportPeriod('year',this.value)">${yearsAvailable.map(y=>`<option value="${y}" ${y===reportYear?'selected':''}>${y}</option>`).join('')}</select></div></div></div>
+  <div class="field"><label>Year</label><select onchange="setReportPeriod('year',this.value)">${yearsAvailable.map(y=>`<option value="${y}" ${y===reportYear?'selected':''}>${y}</option>`).join('')}</select></div>
+  <div class="field"><label>Shop / location</label><select onchange="setReportPeriod('shop',this.value)"><option value="all" ${reportShop==='all'?'selected':''}>All locations</option>${cache.shops.map(s=>`<option value="${s.id}" ${reportShop===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div></div></div>
+
+  <div class="card"><div class="cardHead"><div><h3>Revenue by shop — ${monthName(reportMonth)} ${reportYear}</h3><p>Compare how each location performed this month</p></div></div>
+  <div class="tableWrap"><table><thead><tr><th>Shop</th><th>Transactions</th><th>Revenue</th><th>Gross profit*</th></tr></thead><tbody>${cache.shops.map(s=>{const sSales=salesInMonth(reportYear,reportMonth).filter(x=>x.shop_id===s.id).length?null:null; const raw=cache.sales.filter(x=>x.date>=`${reportYear}-${String(reportMonth).padStart(2,'0')}-01`&&x.date<=`${reportYear}-${String(reportMonth).padStart(2,'0')}-31`&&x.shop_id===s.id); const sum=reportSummary(raw); return `<tr><td>${esc(s.name)}</td><td>${sum.count}</td><td><b>${money(sum.rev)}</b></td><td class="ok">${money(sum.gross)}</td></tr>`}).join('')||'<tr><td colspan="4" class="empty">No shops yet.</td></tr>'}</tbody></table></div></div>
 
   <div class="card"><div class="cardHead"><div><h3>${monthName(reportMonth)} ${reportYear} — Monthly Report</h3><p>Revenue, profit and expenses for the selected month</p></div></div>
   <div class="grid g4"><div class="kpi"><div class="label">Revenue</div><div class="value">${money(monthSum.rev)}</div><div class="sub">${monthSum.count} transaction(s)</div></div>
