@@ -219,7 +219,7 @@ const sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANO
 let session=null, me=null, business=null, view='login', authMode='login';
 let cache={shops:[],categories:[],products:[],stock:{},sales:[],saleLines:[],purchases:[],transfers:[],adjustments:[],expenses:[],activity:[],members:[]};
 let storeFilter='all', search='', cart=[], editing=null, scanner=null, registerBusy=false;
-let reportMonth=new Date().getMonth()+1, reportYear=new Date().getFullYear(), reportShop='all';
+let reportMonth=new Date().getMonth()+1, reportYear=new Date().getFullYear(), reportShop='all', reportType='month', reportQuarter=Math.ceil((new Date().getMonth()+1)/3);
 let sidebarCollapsed=localStorage.getItem('ubm_sidebar_collapsed')==='1';
 let mobileSidebarOpen=false;
 function toggleSidebar(){
@@ -250,7 +250,15 @@ function productById(id){return cache.products.find(p=>p.id===id)}
 function shopObj(id){return cache.shops.find(s=>s.id===id)}
 function stock(shopId,code){return Number(cache.stock[shopId]?.[code]||0)}
 function setStockLocal(shopId,code,q){cache.stock[shopId]=cache.stock[shopId]||{};cache.stock[shopId][code]=Math.max(0,Number(q||0))}
-function statusTag(q){return q<=0?'<span class="tag out">Out</span>':q<=business.low_stock?'<span class="tag low">Low</span>':'<span class="tag ok">In stock</span>'}
+function threshold(p){ const v=p?.low_stock; return (v===null||v===undefined||v==='')?business.low_stock:Number(v); }
+function liveSearch(el){
+  const pos=el.selectionStart, id=el.id;
+  search=el.value;
+  renderView();
+  const ne=document.getElementById(id);
+  if(ne){ ne.focus(); try{ ne.setSelectionRange(pos,pos); }catch(e){} }
+}
+function statusTag(q,p){const t=p?threshold(p):business.low_stock; return q<=0?'<span class="tag out">Out</span>':q<=t?'<span class="tag low">Low</span>':'<span class="tag ok">In stock</span>'}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.remove('hidden');clearTimeout(window.__toastT);window.__toastT=setTimeout(()=>t.classList.add('hidden'),2600)}
 function visibleStores(){return cache.shops.filter(s=>me.role!=='cashier'||s.id===me.shop_id)}
 
@@ -301,7 +309,10 @@ async function loadAllData(){
   cache.activity=activity.data||[]; cache.members=members.data||[];
   cache.stock={};
   (stockRows.data||[]).forEach(r=>{const p=cache.products.find(x=>x.id===r.product_id); if(p){cache.stock[r.shop_id]=cache.stock[r.shop_id]||{};cache.stock[r.shop_id][p.code]=r.qty;}});
-  if(cache.categories.length===0){ cache.categories=[{name:'General'}]; }
+  if(cache.categories.length===0){
+    const {data}=await sb.from('categories').insert({business_id:me.business_id,name:'General'}).select().single();
+    cache.categories=[data||{name:'General'}];
+  }
 }
 function linesFor(saleId){return cache.saleLines.filter(l=>l.sale_id===saleId)}
 
@@ -399,11 +410,11 @@ function bindAuth(){
 }
 
 function navItems(){
-  if(me.role==='cashier') return [['dashboard','Dashboard','▦'],['pos','Point of Sale','▣'],['myStock','My Stock','▤'],['transfers','Transfers','⇄'],['sales','Sales History','◷']];
+  if(me.role==='cashier') return [['dashboard','Dashboard','▦'],['pos','Point of Sale','▣'],['myStock','My Stock','▤'],['transfers','Transfers','⇄'],['purchases','Purchases','＋'],['sales','Sales History','◷'],['reports','Reports','▥']];
   if(me.role==='inventory') return [['dashboard','Dashboard','▦'],['products','Products &amp; Barcodes','◈'],['inventory','Inventory','▤'],['transfers','Transfers','⇄'],['purchases','Purchases','＋']];
   return [['dashboard','Dashboard','▦'],['pos','Point of Sale','▣'],['products','Products &amp; Barcodes','◈'],['inventory','Inventory','▤'],['stores','Stores / Shops','⌂'],['transfers','Transfers','⇄'],['purchases','Purchases','＋'],['sales','Sales','◷'],['expenses','Expenses','−'],['reports','Reports','▥'],['users','Staff Accounts','♙'],['settings','Settings','⚙']];
 }
-function lowStockCount(){let n=0;cache.shops.forEach(st=>cache.products.forEach(p=>{const q=stock(st.id,p.code);if(q<=business.low_stock)n++}));return n}
+function lowStockCount(){let n=0;cache.shops.forEach(st=>cache.products.forEach(p=>{const q=stock(st.id,p.code);if(q<=threshold(p))n++}));return n}
 function layout(){
   const dark=document.documentElement.getAttribute('data-theme')==='dark';
   return `<div class="app">
@@ -412,7 +423,7 @@ function layout(){
   <div class="nav">${navItems().map(x=>`<button class="${view===x[0]?'active':''}" onclick="go('${x[0]}');closeMobileSidebar()"><span>${x[2]}</span><span>${x[1]}</span>${x[0]==='dashboard'&&lowStockCount()?`<span class="badge">${lowStockCount()}</span>`:''}</button>`).join('')}</div>
   <div class="sideBottom"><button onclick="logout()">⏻ <span>Log out</span></button></div></aside>
   <main class="main"><header class="top"><button class="hamburger" onclick="toggleSidebar()" title="Show/hide menu">☰</button><div class="topSearch"><span>⌕</span><input value="${esc(search)}" oninput="globalSearch(this.value)" placeholder="Search products, barcode, sales, customers…"></div>
-  <div class="user"><button class="themeBtn" onclick="toggleTheme()" title="Toggle dark mode">${dark?'☀️':'🌙'}</button><div><b>${esc(me.name)}</b><div class="muted" style="font-size:11px">${esc(roleName(me.role))}${me.shop_id?' · '+esc(shopObj(me.shop_id)?.name||''):''}</div></div><div class="avatar">${esc((me.name||'U').slice(0,1).toUpperCase())}</div></div></header>
+  <div class="user"><button class="themeBtn" onclick="toggleTheme()" title="Toggle dark mode">${dark?'☀️':'🌙'}</button><div><b>${esc(me.name)}</b><div class="muted" style="font-size:11px">${esc(roleName(me.role))}${me.shop_id?' · '+esc(shopObj(me.shop_id)?.name||''):''}</div></div>${me.avatar?`<img src="${me.avatar}" style="width:34px;height:34px;border-radius:50%;object-fit:cover">`:`<div class="avatar">${esc((me.name||'U').slice(0,1).toUpperCase())}</div>`}</div></header>
   <section class="content" id="content"></section></main></div>`;
 }
 function pageTitle(){return ({dashboard:'Dashboard',pos:'Point of Sale',products:'Products & Barcodes',inventory:'Inventory',stores:'Stores & Shops',transfers:'Stock Transfers',purchases:'Purchases',sales:'Sales History',expenses:'Expenses',reports:'Reports & Analytics',users:'Staff Accounts',settings:'Business Settings',myStock:'My Stock'}[view]||view)}
@@ -435,7 +446,7 @@ function bindViewEvents(){
 /* ---------------- DASHBOARD ---------------- */
 function dashboard(){
   const today=dateOnly(), sales=cache.sales.filter(s=>s.date===today), rev=sales.reduce((a,s)=>a+Number(s.total),0), allRev=cache.sales.reduce((a,s)=>a+Number(s.total),0);
-  const low=[]; cache.shops.forEach(st=>cache.products.forEach(p=>{const q=stock(st.id,p.code); if(q<=business.low_stock) low.push({st,p,q});}));
+  const low=[]; cache.shops.forEach(st=>cache.products.forEach(p=>{const q=stock(st.id,p.code); if(q<=threshold(p)) low.push({st,p,q});}));
   const units=cache.products.reduce((a,p)=>a+cache.shops.reduce((b,s)=>b+stock(s.id,p.code),0),0);
   const top=[...cache.products].map(p=>({p,n:linesForProduct(p.code).reduce((a,l)=>a+Number(l.qty),0)})).sort((a,b)=>b.n-a.n).slice(0,6);
   return `<div class="grid g4"><div class="kpi"><div class="label">Today's sales</div><div class="value">${money(rev)}</div><div class="sub">${sales.length} transaction(s)</div></div><div class="kpi"><div class="label">All-time sales</div><div class="value">${money(allRev)}</div></div><div class="kpi"><div class="label">Products</div><div class="value">${cache.products.length}</div><div class="sub">${units} units across locations</div></div><div class="kpi"><div class="label">Stock alerts</div><div class="value ${low.length?'bad':''}">${low.length}</div><div class="sub">Low / out of stock</div></div></div>
@@ -450,16 +461,16 @@ function salesChart(){let vals=[];for(let i=6;i>=0;i--){const d=new Date();d.set
 /* ---------------- PRODUCTS & BARCODES ---------------- */
 function productsView(){
   let list=cache.products.filter(p=>p.active!==false); if(search) list=list.filter(p=>(p.name+' '+p.code+' '+p.barcode+' '+p.category).toLowerCase().includes(search.toLowerCase()));
-  return `<div class="card"><div class="searchLine"><input value="${esc(search)}" oninput="search=this.value;renderView()" placeholder="Search product name, SKU, category or barcode…"><button class="btn" onclick="search='';renderView()">Clear</button></div>
+  return `<div class="card"><div class="searchLine"><input id="searchBox" value="${esc(search)}" oninput="liveSearch(this)" placeholder="Search product name, SKU, category or barcode…"><button class="btn" onclick="search='';renderView()">Clear</button></div>
   <div class="tableWrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Category</th><th>Barcode</th><th>Cost</th><th>Price</th><th>Stock</th><th>Status</th><th></th></tr></thead><tbody>
-  ${list.map(p=>{const total=cache.shops.reduce((a,s)=>a+stock(s.id,p.code),0);return `<tr><td><b>${esc(p.name)}</b><div class="muted">${esc(p.unit||'unit')}</div></td><td class="mono">${esc(p.code)}</td><td>${esc(p.category)}</td><td><svg class="barcode-svg" data-barcode="${esc(p.barcode)}"></svg></td><td>${money(p.cost)}</td><td>${money(p.price)}</td><td class="num">${total}</td><td>${statusTag(total)}</td><td><div class="actions"><button class="btn small" onclick="openProduct('${p.code}')">Edit</button><button class="btn small" onclick="printBarcode('${p.code}')">Print</button></div></td></tr>`}).join('')||`<tr><td colspan="9" class="empty">No products found. Click "New Product" to add your first item.</td></tr>`}
+  ${list.map(p=>{const total=cache.shops.reduce((a,s)=>a+stock(s.id,p.code),0);return `<tr><td><b>${esc(p.name)}</b><div class="muted">${esc(p.unit||'unit')}</div></td><td class="mono">${esc(p.code)}</td><td>${esc(p.category)}</td><td><svg class="barcode-svg" data-barcode="${esc(p.barcode)}"></svg></td><td>${money(p.cost)}</td><td>${money(p.price)}</td><td class="num">${total}</td><td>${statusTag(total,p)}</td><td><div class="actions"><button class="btn small" onclick="openProduct('${p.code}')">Edit</button><button class="btn small" onclick="printBarcode('${p.code}')">Print</button></div></td></tr>`}).join('')||`<tr><td colspan="9" class="empty">No products found. Click "New Product" to add your first item.</td></tr>`}
   </tbody></table></div></div>`;
 }
 function openProduct(code=''){
   editing=code||null;
   const p=code?product(code):{code:'',name:'',category:cache.categories[0]?.name||'General',barcode:makeBarcode(),cost:0,price:0,unit:'unit',tax:business.tax};
   document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead"><div><h3>${code?'Edit product':'Add new product'}</h3><p>Barcode is generated automatically and is a real scannable Code128 symbol.</p></div><button class="btn" onclick="closeModal()">✕</button></div>
-  <form id="productForm"><div class="formGrid"><div class="field"><label>Product name</label><input id="pn" value="${esc(p.name)}" required></div><div class="field"><label>SKU / item code</label><input id="pc" value="${esc(p.code)}" required ${code?'readonly':''}></div><div class="field"><label>Category</label><select id="pct">${cache.categories.map(c=>`<option ${c.name===p.category?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div><div class="field"><label>Unit</label><input id="pu" value="${esc(p.unit||'unit')}"></div><div class="field"><label>Cost price</label><input id="pco" type="number" min="0" step=".01" value="${p.cost||0}"></div><div class="field"><label>Selling price</label><input id="pp" type="number" min="0" step=".01" value="${p.price||0}"></div><div class="field"><label>Barcode value</label><input id="pb" value="${esc(p.barcode)}"></div><div class="field"><label>Tax %</label><input id="pt" type="number" min="0" value="${p.tax??business.tax}"></div></div>
+  <form id="productForm"><div class="formGrid"><div class="field"><label>Product name</label><input id="pn" value="${esc(p.name)}" required></div><div class="field"><label>SKU / item code</label><input id="pc" value="${esc(p.code)}" required ${code?'readonly':''}></div><div class="field"><label>Category</label><select id="pct">${cache.categories.map(c=>`<option ${c.name===p.category?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div><div class="field"><label>Unit</label><input id="pu" value="${esc(p.unit||'unit')}"></div><div class="field"><label>Cost price</label><input id="pco" type="number" min="0" step=".01" value="${p.cost||0}"></div><div class="field"><label>Selling price</label><input id="pp" type="number" min="0" step=".01" value="${p.price||0}"></div><div class="field"><label>Barcode value</label><input id="pb" value="${esc(p.barcode)}"></div><div class="field"><label>Tax %</label><input id="pt" type="number" min="0" value="${p.tax??business.tax}"></div><div class="field"><label>Low stock alert at (blank = business default: ${business.low_stock})</label><input id="pls" type="number" min="0" value="${p.low_stock??''}" placeholder="e.g. 6 or 30"></div></div>
   <div class="barcodeBox" style="margin-top:16px"><svg class="barcode-svg" data-barcode="${esc(p.barcode)}"></svg></div>
   <div class="actions" style="margin-top:18px"><button class="btn primary">Save product</button><button type="button" class="btn" onclick="closeModal()">Cancel</button></div></form></div>`;
   document.getElementById('modal').classList.remove('hidden');
@@ -469,7 +480,8 @@ function openProduct(code=''){
 async function saveProduct(e){
   e.preventDefault();
   const code=document.getElementById('pc').value.trim();
-  const obj={code, name:document.getElementById('pn').value.trim(), category:document.getElementById('pct').value, unit:document.getElementById('pu').value.trim()||'unit', cost:Number(document.getElementById('pco').value), price:Number(document.getElementById('pp').value), barcode:document.getElementById('pb').value.trim()||makeBarcode(), tax:Number(document.getElementById('pt').value)||0, active:true, business_id:me.business_id};
+  const lsRaw=document.getElementById('pls').value.trim();
+  const obj={code, name:document.getElementById('pn').value.trim(), category:document.getElementById('pct').value, unit:document.getElementById('pu').value.trim()||'unit', cost:Number(document.getElementById('pco').value), price:Number(document.getElementById('pp').value), barcode:document.getElementById('pb').value.trim()||makeBarcode(), tax:Number(document.getElementById('pt').value)||0, low_stock:lsRaw===''?null:Number(lsRaw), active:true, business_id:me.business_id};
   if(!editing && product(code)){ toast('SKU already exists'); return; }
   let error;
   if(editing){ const p=product(editing); ({error}=await sb.from('products').update(obj).eq('id',p.id)); if(!error) Object.assign(p,obj); }
@@ -499,20 +511,23 @@ function printLabelSheet(p,count,cols){
 function inventoryView(){
   const stores=visibleStores(); let rows=[]; stores.forEach(s=>cache.products.forEach(p=>rows.push({s,p,q:stock(s.id,p.code)})));
   if(search) rows=rows.filter(x=>(x.p.name+' '+x.p.code+' '+x.p.barcode+' '+x.s.name).toLowerCase().includes(search.toLowerCase()));
-  return `<div class="card"><div class="searchLine"><input value="${esc(search)}" oninput="search=this.value;renderView()" placeholder="Search inventory by product, barcode, SKU or location"><button class="btn" onclick="search='';renderView()">Clear</button></div>
+  return `${can('manager')?`<div class="card"><div class="cardHead"><div><h3>Stock adjustment</h3><p>Owner/manager can correct physical counts with an audit record.</p></div></div>
+  <form id="adjForm" class="formGrid"><div class="field"><label>Location</label><select id="as">${stores.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>Product</label><input id="ap" list="adjPlist" required placeholder="Type product name, SKU or barcode…"><datalist id="adjPlist">${cache.products.map(p=>`<option value="${esc(p.code)}">${esc(p.name)}</option><option value="${esc(p.name)}">${esc(p.code)}</option>`).join('')}</datalist></div><div class="field"><label>New physical quantity</label><input id="aq" type="number" min="0" required></div><div class="field"><label>Reason</label><input id="ar" required placeholder="Stock count / damaged / correction"></div><button class="btn primary">Save adjustment</button></form></div>`:''}
+  <div class="card"><div class="searchLine"><input id="searchBox" value="${esc(search)}" oninput="liveSearch(this)" placeholder="Search inventory by product, barcode, SKU or location"><button class="btn" onclick="search='';renderView()">Clear</button></div>
   <div class="tableWrap"><table><thead><tr><th>Location</th><th>Product</th><th>SKU</th><th>On hand</th><th>Cost value</th><th>Retail value</th><th>Status</th></tr></thead><tbody>
-  ${rows.map(x=>`<tr><td>${esc(x.s.name)}</td><td><b>${esc(x.p.name)}</b></td><td class="mono">${esc(x.p.code)}</td><td class="num">${x.q}</td><td>${money(x.q*x.p.cost)}</td><td>${money(x.q*x.p.price)}</td><td>${statusTag(x.q)}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">No inventory records.</td></tr>'}
-  </tbody></table></div></div>
-  <div class="card"><div class="cardHead"><div><h3>Stock adjustment</h3><p>Owner/manager can correct physical counts with an audit record.</p></div></div>
-  <form id="adjForm" class="formGrid"><div class="field"><label>Location</label><select id="as">${stores.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>Product</label><select id="ap">${cache.products.map(p=>`<option value="${p.code}">${esc(p.name)} (${esc(p.code)})</option>`).join('')}</select></div><div class="field"><label>New physical quantity</label><input id="aq" type="number" min="0" required></div><div class="field"><label>Reason</label><input id="ar" required placeholder="Stock count / damaged / correction"></div><button class="btn primary">Save adjustment</button></form></div>`;
+  ${rows.map(x=>`<tr><td>${esc(x.s.name)}</td><td><b>${esc(x.p.name)}</b></td><td class="mono">${esc(x.p.code)}</td><td class="num">${x.q}</td><td>${money(x.q*x.p.cost)}</td><td>${money(x.q*x.p.price)}</td><td>${statusTag(x.q,x.p)}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">No inventory records.</td></tr>'}
+  </tbody></table></div></div>`;
 }
 async function bindAdjForm(){ const f=document.getElementById('adjForm'); if(f) f.addEventListener('submit', adjustStock); }
 async function adjustStock(e){
   e.preventDefault(); if(!can('manager')) return;
-  const s=document.getElementById('as').value, code=document.getElementById('ap').value, n=Number(document.getElementById('aq').value), old=stock(s,code);
+  const s=document.getElementById('as').value, raw=document.getElementById('ap').value.trim();
+  const p=product(raw) || cache.products.find(x=>x.name.toLowerCase()===raw.toLowerCase());
+  if(!p){ toast('Select a valid product from the list'); return; }
+  const code=p.code, n=Number(document.getElementById('aq').value), old=stock(s,code);
   setStockLocal(s,code,n); await persistStock(s,code,n);
-  await sb.from('adjustments').insert({business_id:me.business_id,shop_id:s,product_id:product(code).id,old_qty:old,new_qty:n,reason:document.getElementById('ar').value,by_name:me.name});
-  await logActivity('adjustment',`Stock adjusted: ${product(code)?.name} at ${shopObj(s)?.name} (${old} → ${n})`);
+  await sb.from('adjustments').insert({business_id:me.business_id,shop_id:s,product_id:p.id,old_qty:old,new_qty:n,reason:document.getElementById('ar').value,by_name:me.name});
+  await logActivity('adjustment',`Stock adjusted: ${p.name} at ${shopObj(s)?.name} (${old} → ${n})`);
   renderView(); toast('Stock adjusted');
 }
 
@@ -577,20 +592,23 @@ async function doTransfer(e){
 
 /* ---------------- PURCHASES ---------------- */
 function purchasesView(){
-  return `<div class="card"><div class="cardHead"><div><h3>Receive purchase / stock in</h3><p>Record supplier deliveries directly into a selected location.</p></div></div>
-  <form id="purchaseForm" class="formGrid"><div class="field"><label>Location</label><select id="ps">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>Product / barcode</label><input id="pprod" list="p2" required><datalist id="p2">${cache.products.map(p=>`<option value="${esc(p.code)}">${esc(p.name)}</option><option value="${esc(p.barcode)}">${esc(p.name)}</option>`).join('')}</datalist></div><div class="field"><label>Quantity</label><input id="pqty" type="number" min="1" required></div><div class="field"><label>Cost / unit</label><input id="pcost" type="number" min="0" step=".01" required></div><div class="field"><label>Supplier</label><input id="psup" placeholder="Supplier name"></div><div class="field"><label>Invoice / reference</label><input id="pref"></div><button class="btn primary">＋ Receive stock</button></form></div>
-  <div class="card"><div class="tableWrap"><table><thead><tr><th>Date</th><th>Location</th><th>Product</th><th>Qty</th><th>Cost/unit</th><th>Total</th><th>Supplier</th><th>By</th></tr></thead><tbody>${cache.purchases.slice(0,100).map(x=>`<tr><td>${x.date}</td><td>${esc(shopObj(x.shop_id)?.name)}</td><td>${esc(productById(x.product_id)?.name||'')}</td><td>${x.qty}</td><td>${money(x.cost)}</td><td>${money(x.qty*x.cost)}</td><td>${esc(x.supplier||'')}</td><td>${esc(x.by_name)}</td></tr>`).join('')||'<tr><td colspan="8" class="empty">No purchases recorded.</td></tr>'}</tbody></table></div></div>`;
+  const locked=me.role==='cashier'; const myShop=shopObj(me.shop_id);
+  const list=locked?cache.purchases.filter(x=>x.shop_id===me.shop_id):cache.purchases;
+  return `<div class="card"><div class="cardHead"><div><h3>Receive purchase / stock in</h3><p>${locked?`Record deliveries received directly at <b>${esc(myShop?.name||'your shop')}</b>.`:'Record supplier deliveries directly into a selected location.'}</p></div></div>
+  <form id="purchaseForm" class="formGrid"><div class="field"><label>Location</label>${locked?`<select id="ps" disabled><option value="${me.shop_id}">${esc(myShop?.name)}</option></select>`:`<select id="ps">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>`}</div><div class="field"><label>Product / barcode</label><input id="pprod" list="p2" required><datalist id="p2">${cache.products.map(p=>`<option value="${esc(p.code)}">${esc(p.name)}</option><option value="${esc(p.barcode)}">${esc(p.name)}</option>`).join('')}</datalist></div><div class="field"><label>Quantity</label><input id="pqty" type="number" min="1" required></div><div class="field"><label>Cost / unit</label><input id="pcost" type="number" min="0" step=".01" required></div><div class="field"><label>Supplier</label><input id="psup" placeholder="Supplier name"></div><div class="field"><label>Invoice / reference</label><input id="pref"></div><button class="btn primary">＋ Receive stock</button></form></div>
+  <div class="card"><div class="tableWrap"><table><thead><tr><th>Date</th><th>Location</th><th>Product</th><th>Qty</th><th>Cost/unit</th><th>Total</th><th>Supplier</th><th>By</th></tr></thead><tbody>${list.slice(0,100).map(x=>`<tr><td>${x.date}</td><td>${esc(shopObj(x.shop_id)?.name)}</td><td>${esc(productById(x.product_id)?.name||'')}</td><td>${x.qty}</td><td>${money(x.cost)}</td><td>${money(x.qty*x.cost)}</td><td>${esc(x.supplier||'')}</td><td>${esc(x.by_name)}</td></tr>`).join('')||'<tr><td colspan="8" class="empty">No purchases recorded.</td></tr>'}</tbody></table></div></div>`;
 }
 function bindPurchaseForm(){ const f=document.getElementById('purchaseForm'); if(f) f.addEventListener('submit', receivePurchase); }
 async function receivePurchase(e){
   e.preventDefault();
-  const p=product(document.getElementById('pprod').value.trim()), s=document.getElementById('ps').value, q=Number(document.getElementById('pqty').value), cost=Number(document.getElementById('pcost').value);
+  const s=me.role==='cashier'?me.shop_id:document.getElementById('ps').value;
+  const p=product(document.getElementById('pprod').value.trim()), q=Number(document.getElementById('pqty').value), cost=Number(document.getElementById('pcost').value);
   if(!p||q<1){ toast('Select a valid product'); return; }
   setStockLocal(s,p.code,stock(s,p.code)+q); await persistStock(s,p.code,stock(s,p.code));
   const {data}=await sb.from('purchases').insert({business_id:me.business_id,shop_id:s,product_id:p.id,qty:q,cost,supplier:document.getElementById('psup').value.trim(),ref:document.getElementById('pref').value.trim(),by_name:me.name}).select().single();
   cache.purchases.unshift(data);
   await logActivity('purchase',`${q} × ${p.name} received at ${shopObj(s)?.name}`);
-  renderView(); toast('Purchase received');
+  renderView(); toast('Purchase received — stock updated');
 }
 
 /* ---------------- POS + BARCODE SCAN-TO-SALE ---------------- */
@@ -629,7 +647,7 @@ function openScanConfirm(p){
   const shop=shopObj(activeShopId()); const available=stock(shop.id,p.code);
   document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead"><div><h3>Confirm item</h3><p>Review quantity and price before adding it to the sale.</p></div><button class="btn" onclick="closeModal()">✕</button></div>
   <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center"><svg class="barcode-svg" data-barcode="${esc(p.barcode)}"></svg>
-  <div><h3 style="margin:0 0 4px">${esc(p.name)}</h3><div class="muted">${esc(p.code)} · ${esc(p.category)}</div><div class="tag ${available<=0?'out':available<=business.low_stock?'low':'ok'}" style="margin-top:8px">${available} in stock at ${esc(shop.name)}</div></div></div>
+  <div><h3 style="margin:0 0 4px">${esc(p.name)}</h3><div class="muted">${esc(p.code)} · ${esc(p.category)}</div><div class="tag ${available<=0?'out':available<=threshold(p)?'low':'ok'}" style="margin-top:8px">${available} in stock at ${esc(shop.name)}</div></div></div>
   <form id="confirmForm" class="formGrid" style="margin-top:18px"><div class="field"><label>Quantity</label><input id="cfQty" type="number" min="1" max="${available}" value="1" required></div><div class="field"><label>Unit price</label><input id="cfPrice" type="number" min="0" step=".01" value="${p.price}" required></div><div class="field"><button class="btn primary wide" ${available<=0?'disabled':''}>Add to sale</button></div></form></div>`;
   document.getElementById('modal').classList.remove('hidden'); renderBarcodes();
   document.getElementById('confirmForm').addEventListener('submit',(e)=>{
@@ -716,7 +734,7 @@ function salesView(){
   if(search) list=list.filter(s=>(s.receipt+' '+s.customer+' '+s.cashier_name+' '+linesFor(s.id).map(l=>l.name).join(' ')).toLowerCase().includes(search.toLowerCase()));
   const rev=list.reduce((a,s)=>a+Number(s.total),0);
   return `<div class="grid g3"><div class="kpi"><div class="label">Transactions</div><div class="value">${list.length}</div></div><div class="kpi"><div class="label">Sales value</div><div class="value">${money(rev)}</div></div><div class="kpi"><div class="label">Average sale</div><div class="value">${money(list.length?rev/list.length:0)}</div></div></div>
-  <div class="card"><div class="searchLine"><input value="${esc(search)}" oninput="search=this.value;renderView()" placeholder="Search receipt, customer, cashier or product…"><button class="btn" onclick="search='';renderView()">Clear</button></div>
+  <div class="card"><div class="searchLine"><input id="searchBox" value="${esc(search)}" oninput="liveSearch(this)" placeholder="Search receipt, customer, cashier or product…"><button class="btn" onclick="search='';renderView()">Clear</button></div>
   <div class="tableWrap"><table><thead><tr><th>Receipt</th><th>Date</th><th>Location</th><th>Customer</th><th>Cashier</th><th>Items</th><th>Payment</th><th>Total</th><th></th></tr></thead><tbody>${list.map(s=>`<tr><td class="mono">${s.receipt}</td><td>${s.date}<br><small>${s.time}</small></td><td>${esc(shopObj(s.shop_id)?.name)}</td><td>${esc(s.customer)}</td><td>${esc(s.cashier_name)}</td><td>${linesFor(s.id).reduce((a,l)=>a+Number(l.qty),0)}</td><td>${esc(s.payment)}</td><td><b>${money(s.total)}</b></td><td><button class="btn small" onclick="showReceiptById('${s.id}')">Receipt</button></td></tr>`).join('')||'<tr><td colspan="9" class="empty">No sales found.</td></tr>'}</tbody></table></div></div>`;
 }
 function showReceiptById(id){ const s=cache.sales.find(x=>x.id===id); if(s) showReceipt(s); }
@@ -757,60 +775,88 @@ function reportSummary(salesList){
 }
 function lowStockRows(){
   const rows=[];
-  cache.shops.filter(st=>reportShop==='all'||st.id===reportShop).forEach(st=>cache.products.forEach(p=>{ const q=stock(st.id,p.code); if(q<=business.low_stock) rows.push({shop:st.name,name:p.name,code:p.code,qty:q}); }));
+  cache.shops.filter(st=>reportShop==='all'||st.id===reportShop).forEach(st=>cache.products.forEach(p=>{ const q=stock(st.id,p.code); if(q<=threshold(p)) rows.push({shop:st.name,name:p.name,code:p.code,qty:q,p}); }));
   return rows.sort((a,b)=>a.qty-b.qty);
 }
-function setReportPeriod(field,val){ if(field==='month') reportMonth=Number(val); else if(field==='year') reportYear=Number(val); else reportShop=val; renderView(); }
+function setReportPeriod(field,val){ if(field==='month') reportMonth=Number(val); else if(field==='year') reportYear=Number(val); else if(field==='shop') reportShop=val; else if(field==='type') reportType=val; else if(field==='quarter') reportQuarter=Number(val); renderView(); }
+function quarterOf(m){return Math.ceil(m/3)}
+function salesInQuarter(y,q){const months=[q*3-2,q*3-1,q*3]; return cache.sales.filter(s=>s.date>=`${y}-01-01`&&s.date<=`${y}-12-31`&&months.includes(Number(s.date.slice(5,7)))&&(reportShop==='all'||s.shop_id===reportShop))}
 function reportsView(){
-  const monthSales=salesInMonth(reportYear,reportMonth), yearSales=salesInYear(reportYear);
-  const monthSum=reportSummary(monthSales), yearSum=reportSummary(yearSales);
-  const monthExpenses=cache.expenses.filter(e=>e.date>=`${reportYear}-${String(reportMonth).padStart(2,'0')}-01`&&e.date<=`${reportYear}-${String(reportMonth).padStart(2,'0')}-31`).reduce((a,e)=>a+Number(e.amount),0);
-  const monthTop=bestSellers(monthSales,8), yearTop=bestSellers(yearSales,8);
+  const isCashier=me.role==='cashier';
+  if(isCashier) reportShop=me.shop_id;
+  const monthSales=salesInMonth(reportYear,reportMonth), yearSales=salesInYear(reportYear), quarterSales=salesInQuarter(reportYear,reportQuarter);
+  const monthSum=reportSummary(monthSales), yearSum=reportSummary(yearSales), quarterSum=reportSummary(quarterSales);
+  const monthExpenses=cache.expenses.filter(e=>e.date>=`${reportYear}-${String(reportMonth).padStart(2,'0')}-01`&&e.date<=`${reportYear}-${String(reportMonth).padStart(2,'0')}-31`&&(reportShop==='all'||e.shop_id===reportShop)).reduce((a,e)=>a+Number(e.amount),0);
+  const monthTop=bestSellers(monthSales,8), yearTop=bestSellers(yearSales,8), quarterTop=bestSellers(quarterSales,8);
   const low=lowStockRows();
   const yearsAvailable=[...new Set(cache.sales.map(s=>Number(s.date.slice(0,4))))]; if(!yearsAvailable.includes(reportYear)) yearsAvailable.push(reportYear); yearsAvailable.sort();
-  return `<div class="card noPrint"><div class="cardHead"><div><h3>Report period</h3><p>Choose the month, year and (optionally) a single shop to report on. Printing includes everything below.</p></div></div>
-  <div class="formGrid"><div class="field"><label>Month</label><select onchange="setReportPeriod('month',this.value)">${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===reportMonth?'selected':''}>${monthName(m)}</option>`).join('')}</select></div>
+  const scopeName=reportShop==='all'?'Whole Business':esc(shopObj(reportShop)?.name||'');
+  const qMonths=[reportQuarter*3-2,reportQuarter*3-1,reportQuarter*3].map(monthName).join(' – ');
+
+  const periodCard=`<div class="card noPrint"><div class="cardHead"><div><h3>Report settings</h3><p>Choose what to report on. Only the section for the report type you pick is included when you print.</p></div></div>
+  <div class="formGrid">
+  <div class="field"><label>Report type</label><select onchange="setReportPeriod('type',this.value)"><option value="month" ${reportType==='month'?'selected':''}>Monthly</option><option value="quarter" ${reportType==='quarter'?'selected':''}>Quarterly</option><option value="year" ${reportType==='year'?'selected':''}>Yearly</option></select></div>
+  ${reportType==='month'?`<div class="field"><label>Month</label><select onchange="setReportPeriod('month',this.value)">${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===reportMonth?'selected':''}>${monthName(m)}</option>`).join('')}</select></div>`:''}
+  ${reportType==='quarter'?`<div class="field"><label>Quarter</label><select onchange="setReportPeriod('quarter',this.value)">${[1,2,3,4].map(q=>`<option value="${q}" ${q===reportQuarter?'selected':''}>Q${q} (${[monthName(q*3-2),monthName(q*3-1),monthName(q*3)].join('/')})</option>`).join('')}</select></div>`:''}
   <div class="field"><label>Year</label><select onchange="setReportPeriod('year',this.value)">${yearsAvailable.map(y=>`<option value="${y}" ${y===reportYear?'selected':''}>${y}</option>`).join('')}</select></div>
-  <div class="field"><label>Shop / location</label><select onchange="setReportPeriod('shop',this.value)"><option value="all" ${reportShop==='all'?'selected':''}>All locations</option>${cache.shops.map(s=>`<option value="${s.id}" ${reportShop===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div></div></div>
+  ${isCashier?`<div class="field"><label>Shop</label><input value="${esc(shopObj(me.shop_id)?.name||'')}" disabled></div>`:`<div class="field"><label>Shop / location</label><select onchange="setReportPeriod('shop',this.value)"><option value="all" ${reportShop==='all'?'selected':''}>Whole Business (all shops)</option>${cache.shops.map(s=>`<option value="${s.id}" ${reportShop===s.id?'selected':''}>${esc(s.name)} only</option>`).join('')}</select></div>`}
+  </div></div>`;
 
-  <div class="card"><div class="cardHead"><div><h3>Revenue by shop — ${monthName(reportMonth)} ${reportYear}</h3><p>Compare how each location performed this month</p></div></div>
-  <div class="tableWrap"><table><thead><tr><th>Shop</th><th>Transactions</th><th>Revenue</th><th>Gross profit*</th></tr></thead><tbody>${cache.shops.map(s=>{const sSales=salesInMonth(reportYear,reportMonth).filter(x=>x.shop_id===s.id).length?null:null; const raw=cache.sales.filter(x=>x.date>=`${reportYear}-${String(reportMonth).padStart(2,'0')}-01`&&x.date<=`${reportYear}-${String(reportMonth).padStart(2,'0')}-31`&&x.shop_id===s.id); const sum=reportSummary(raw); return `<tr><td>${esc(s.name)}</td><td>${sum.count}</td><td><b>${money(sum.rev)}</b></td><td class="ok">${money(sum.gross)}</td></tr>`}).join('')||'<tr><td colspan="4" class="empty">No shops yet.</td></tr>'}</tbody></table></div></div>
-
-  <div class="card"><div class="cardHead"><div><h3>${monthName(reportMonth)} ${reportYear} — Monthly Report</h3><p>Revenue, profit and expenses for the selected month</p></div></div>
+  const monthlySection=`<div class="printSection">
+  <div class="card"><div class="cardHead"><div><h3>${monthName(reportMonth)} ${reportYear} — ${scopeName} Monthly Report</h3><p>Revenue, profit and expenses for this month only</p></div></div>
   <div class="grid g4"><div class="kpi"><div class="label">Revenue</div><div class="value">${money(monthSum.rev)}</div><div class="sub">${monthSum.count} transaction(s)</div></div>
   <div class="kpi"><div class="label">Gross profit*</div><div class="value ok">${money(monthSum.gross)}</div></div>
   <div class="kpi"><div class="label">Expenses</div><div class="value bad">${money(monthExpenses)}</div></div>
   <div class="kpi"><div class="label">Net (rev − exp)</div><div class="value">${money(monthSum.rev-monthExpenses)}</div></div></div></div>
-
-  <div class="grid g2">
-  <div class="card"><div class="cardHead"><div><h3>Best-selling products — ${monthName(reportMonth)} ${reportYear}</h3><p>Ranked by units sold this month</p></div></div>
+  <div class="card"><div class="cardHead"><div><h3>Best-selling products — ${monthName(reportMonth)} ${reportYear}</h3></div></div>
   ${monthTop.length?`<div class="tableWrap"><table><thead><tr><th>#</th><th>Product</th><th>Units sold</th><th>Revenue</th></tr></thead><tbody>${monthTop.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.name)}</td><td class="num">${x.qty}</td><td>${money(x.revenue)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">No sales recorded this month.</p>'}</div>
+  </div>`;
 
-  <div class="card"><div class="cardHead"><div><h3>Best-selling products — ${reportYear} (year to date)</h3><p>Ranked by units sold across the whole year</p></div></div>
-  ${yearTop.length?`<div class="tableWrap"><table><thead><tr><th>#</th><th>Product</th><th>Units sold</th><th>Revenue</th></tr></thead><tbody>${yearTop.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.name)}</td><td class="num">${x.qty}</td><td>${money(x.revenue)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">No sales recorded this year.</p>'}</div>
-  </div>
+  const quarterlySection=`<div class="printSection">
+  <div class="card"><div class="cardHead"><div><h3>Q${reportQuarter} ${reportYear} (${qMonths}) — ${scopeName} Quarterly Report</h3><p>Revenue and profit for this quarter only</p></div></div>
+  <div class="grid g3"><div class="kpi"><div class="label">Revenue</div><div class="value">${money(quarterSum.rev)}</div><div class="sub">${quarterSum.count} transaction(s)</div></div>
+  <div class="kpi"><div class="label">Gross profit*</div><div class="value ok">${money(quarterSum.gross)}</div></div>
+  <div class="kpi"><div class="label">Avg / month</div><div class="value">${money(quarterSum.rev/3)}</div></div></div>
+  <div style="margin-top:14px">${[reportQuarter*3-2,reportQuarter*3-1,reportQuarter*3].map(m=>{const s=reportSummary(salesInMonth(reportYear,m));return `<div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line)"><span>${monthName(m)}</span><b>${money(s.rev)}</b></div>`}).join('')}</div></div>
+  <div class="card"><div class="cardHead"><div><h3>Best-selling products — Q${reportQuarter} ${reportYear}</h3></div></div>
+  ${quarterTop.length?`<div class="tableWrap"><table><thead><tr><th>#</th><th>Product</th><th>Units sold</th><th>Revenue</th></tr></thead><tbody>${quarterTop.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.name)}</td><td class="num">${x.qty}</td><td>${money(x.revenue)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">No sales recorded this quarter.</p>'}</div>
+  </div>`;
 
-  <div class="card"><div class="cardHead"><div><h3>${reportYear} — Yearly Summary</h3></div></div>
+  const yearlySection=`<div class="printSection">
+  <div class="card"><div class="cardHead"><div><h3>${reportYear} — ${scopeName} Yearly Report</h3><p>All twelve months of ${reportYear}</p></div></div>
   <div class="grid g3"><div class="kpi"><div class="label">Revenue (year)</div><div class="value">${money(yearSum.rev)}</div></div><div class="kpi"><div class="label">Gross profit (year)*</div><div class="value ok">${money(yearSum.gross)}</div></div><div class="kpi"><div class="label">Transactions (year)</div><div class="value">${yearSum.count}</div></div></div>
   <div style="margin-top:14px">${Array.from({length:12},(_,i)=>i+1).map(m=>{const s=reportSummary(salesInMonth(reportYear,m));return `<div style="display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line)"><span>${monthName(m)}</span><b>${money(s.rev)}</b></div>`}).join('')}</div></div>
+  <div class="card"><div class="cardHead"><div><h3>Best-selling products — ${reportYear} (whole year)</h3></div></div>
+  ${yearTop.length?`<div class="tableWrap"><table><thead><tr><th>#</th><th>Product</th><th>Units sold</th><th>Revenue</th></tr></thead><tbody>${yearTop.map((x,i)=>`<tr><td>${i+1}</td><td>${esc(x.name)}</td><td class="num">${x.qty}</td><td>${money(x.revenue)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">No sales recorded this year.</p>'}</div>
+  </div>`;
 
-  <div class="card"><div class="cardHead"><div><h3>Low stock report</h3><p>Every product at or below the low-stock threshold (${business.low_stock} units), across all locations — current snapshot</p></div></div>
-  ${low.length?`<div class="tableWrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Location</th><th>Qty left</th><th>Status</th></tr></thead><tbody>${low.map(r=>`<tr><td>${esc(r.name)}</td><td class="mono">${esc(r.code)}</td><td>${esc(r.shop)}</td><td class="num">${r.qty}</td><td>${statusTag(r.qty)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">Everything is sufficiently stocked.</p>'}</div>
+  const shopBreakdown=(!isCashier)?`<div class="card noPrint"><div class="cardHead"><div><h3>Revenue by shop — ${monthName(reportMonth)} ${reportYear}</h3><p>Quick comparison across all locations (always shown on screen; select one shop above to print just that shop's report)</p></div></div>
+  <div class="tableWrap"><table><thead><tr><th>Shop</th><th>Transactions</th><th>Revenue</th><th>Gross profit*</th></tr></thead><tbody>${cache.shops.map(s=>{const raw=cache.sales.filter(x=>x.date>=`${reportYear}-${String(reportMonth).padStart(2,'0')}-01`&&x.date<=`${reportYear}-${String(reportMonth).padStart(2,'0')}-31`&&x.shop_id===s.id); const sum=reportSummary(raw); return `<tr><td>${esc(s.name)}</td><td>${sum.count}</td><td><b>${money(sum.rev)}</b></td><td class="ok">${money(sum.gross)}</td></tr>`}).join('')||'<tr><td colspan="4" class="empty">No shops yet.</td></tr>'}</tbody></table></div></div>`:'';
 
-  <div class="card"><div class="cardHead"><div><h3>Sales by location</h3><p>All-time, all recorded sales</p></div></div>${cache.shops.map(s=>{const x=cache.sales.filter(a=>a.shop_id===s.id).reduce((a,b)=>a+Number(b.total),0);return `<div style="display:flex;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line)"><span>${esc(s.name)}</span><b>${money(x)}</b></div>`}).join('')}</div>
-  <div class="card"><div class="cardHead"><div><h3>Management notes</h3><p>*Gross profit is estimated from product cost at the time of reporting. A production-grade version should store cost layers/COGS per sale.</p></div></div></div>`;
+  return periodCard + shopBreakdown
+  + (reportType==='month'?monthlySection:'') + (reportType==='quarter'?quarterlySection:'') + (reportType==='year'?yearlySection:'')
+  + `<div class="card"><div class="cardHead"><div><h3>Low stock report — ${scopeName}</h3><p>Every product at or below its own low-stock threshold — current snapshot</p></div></div>
+  ${low.length?`<div class="tableWrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Location</th><th>Qty left</th><th>Status</th></tr></thead><tbody>${low.map(r=>`<tr><td>${esc(r.name)}</td><td class="mono">${esc(r.code)}</td><td>${esc(r.shop)}</td><td class="num">${r.qty}</td><td>${statusTag(r.qty,r.p)}</td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">Everything is sufficiently stocked.</p>'}</div>
+  <div class="card noPrint"><div class="cardHead"><div><h3>Management notes</h3><p>*Gross profit is estimated from product cost at the time of reporting.</p></div></div></div>`;
 }
 
 /* ---------------- STAFF ACCOUNTS ---------------- */
 function usersView(){
   const roles=me.role==='owner' ? ['manager','inventory','cashier','owner'] : ['manager','inventory','cashier'];
   return `<div class="card"><div class="cardHead"><div><h3>Staff accounts</h3><p>Create separate logins for managers, main store operators and cashiers. Each login only ever sees this business.</p></div></div>
-  <div class="tableWrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Assigned location</th><th></th></tr></thead><tbody>${cache.members.map(u=>`<tr><td>${esc(u.name)}</td><td class="mono">${esc(u.username||'(owner login)')}</td><td>${roleName(u.role)}</td><td>${esc(shopObj(u.shop_id)?.name||'All locations')}</td><td>${u.id!==me.id?`<button class="btn small" onclick="editMember('${u.id}')">Edit</button> <button class="btn small danger" onclick="deleteMember('${u.id}')">Remove</button>`:'<span class="muted">You</span>'}</td></tr>`).join('')}</tbody></table></div></div>
+  <div class="tableWrap"><table><thead><tr><th></th><th>Name</th><th>Username</th><th>Role</th><th>Assigned location</th><th></th></tr></thead><tbody>${cache.members.map(u=>`<tr><td>${u.avatar?`<img src="${u.avatar}" style="width:32px;height:32px;border-radius:50%;object-fit:cover">`:`<div class="avatar" style="width:32px;height:32px;font-size:12px">${esc((u.name||'U').slice(0,1).toUpperCase())}</div>`}</td><td>${esc(u.name)}</td><td class="mono">${esc(u.username||'(owner login)')}</td><td>${roleName(u.role)}</td><td>${esc(shopObj(u.shop_id)?.name||'All locations')}</td><td>${u.id!==me.id?`<button class="btn small" onclick="editMember('${u.id}')">Edit</button> <button class="btn small danger" onclick="deleteMember('${u.id}')">Remove</button>`:'<span class="muted">You</span>'}</td></tr>`).join('')}</tbody></table></div></div>
   <div class="card"><div class="cardHead"><div><h3>Add staff account</h3><p>They'll sign in with the username and password you set here — no email needed.</p></div></div>
-  <form id="memberForm" class="formGrid"><div class="field"><label>Full name</label><input id="mn" required></div><div class="field"><label>Username</label><input id="mu" required></div><div class="field"><label>Password</label><input id="mp" type="password" required minlength="6"></div><div class="field"><label>Role</label><select id="mr">${roles.map(r=>`<option value="${r}">${roleName(r)}</option>`).join('')}</select></div><div class="field" id="memberShopField"><label>Assigned shop (cashiers only)</label><select id="ms">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><button class="btn primary">Create account</button></form></div>`;
+  <form id="memberForm" class="formGrid"><div class="field"><label>Full name</label><input id="mn" required></div><div class="field"><label>Username</label><input id="mu" required></div><div class="field"><label>Password</label><input id="mp" type="password" required minlength="6"></div><div class="field"><label>Role</label><select id="mr">${roles.map(r=>`<option value="${r}">${roleName(r)}</option>`).join('')}</select></div><div class="field" id="memberShopField"><label>Assigned shop (cashiers only)</label><select id="ms">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>Profile photo (optional)</label><input id="mavatar" type="file" accept="image/*"></div><button class="btn primary">Create account</button></form></div>`;
 }
 function bindMemberForm(){
   const f=document.getElementById('memberForm'); if(f) f.addEventListener('submit', addMember);
+}
+function readImageAsDataURL(file){
+  return new Promise((resolve,reject)=>{
+    if(!file){ resolve(null); return; }
+    if(file.size>1500000){ reject(new Error('Photo too large — please use an image under 1.5MB.')); return; }
+    const r=new FileReader(); r.onload=()=>resolve(r.result); r.onerror=reject; r.readAsDataURL(file);
+  });
 }
 async function addMember(e){
   e.preventDefault();
@@ -819,12 +865,14 @@ async function addMember(e){
   const password=document.getElementById('mp').value;
   const role=document.getElementById('mr').value;
   const shopId=document.getElementById('ms').value;
+  let avatar=null;
+  try{ avatar=await readImageAsDataURL(document.getElementById('mavatar').files[0]); }catch(err){ toast(err.message); return; }
   if(cache.members.some(u=>(u.username||'').toLowerCase()===username)){ toast('That username is already used in this business.'); return; }
   const syntheticEmail=`${username}.${me.business_id.slice(0,8)}@staff.local`;
   const tempSb=window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {auth:{persistSession:false, autoRefreshToken:false, storageKey:'sb-temp-'+Date.now()}});
   const {data:signData, error:signErr}=await tempSb.auth.signUp({email:syntheticEmail, password});
   if(signErr){ toast(signErr.message.includes('registered')?'That username is already taken.':signErr.message); return; }
-  const row={business_id:me.business_id, auth_user_id:signData.user.id, name, username, role, shop_id: role==='cashier'?shopId:null, theme:'light'};
+  const row={business_id:me.business_id, auth_user_id:signData.user.id, name, username, role, shop_id: role==='cashier'?shopId:null, theme:'light', avatar};
   const {data:member, error:memErr}=await sb.from('members').insert(row).select().single();
   if(memErr){ toast(memErr.message); return; }
   await sb.from('username_directory').insert({username, email:syntheticEmail, business_id:me.business_id});
@@ -834,7 +882,7 @@ async function addMember(e){
 }
 function editMember(id){
   const u=cache.members.find(x=>x.id===id);
-  document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead"><h3>Edit staff account</h3><button class="btn" onclick="closeModal()">✕</button></div><form id="editMemberForm"><div class="formGrid"><div class="field"><label>Name</label><input id="eun" value="${esc(u.name)}" required></div><div class="field"><label>Role</label><select id="eur">${['manager','inventory','cashier'].map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${roleName(r)}</option>`).join('')}</select></div><div class="field"><label>Assigned shop</label><select id="eus"><option value="">All locations</option>${cache.shops.map(s=>`<option value="${s.id}" ${u.shop_id===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div></div><p class="muted small" style="margin-top:10px">To change a password, remove this account and create it again.</p><button class="btn primary" style="margin-top:14px">Save changes</button></form></div>`;
+  document.getElementById('modal').innerHTML=`<div class="modal"><div class="cardHead"><h3>Edit staff account</h3><button class="btn" onclick="closeModal()">✕</button></div><form id="editMemberForm"><div class="formGrid"><div class="field"><label>Name</label><input id="eun" value="${esc(u.name)}" required></div><div class="field"><label>Role</label><select id="eur">${['manager','inventory','cashier'].map(r=>`<option value="${r}" ${u.role===r?'selected':''}>${roleName(r)}</option>`).join('')}</select></div><div class="field"><label>Assigned shop</label><select id="eus"><option value="">All locations</option>${cache.shops.map(s=>`<option value="${s.id}" ${u.shop_id===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div><div class="field"><label>Profile photo</label>${u.avatar?`<img src="${u.avatar}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;margin-bottom:6px">`:''}<input id="euavatar" type="file" accept="image/*"></div></div><p class="muted small" style="margin-top:10px">To change a password, remove this account and create it again.</p><button class="btn primary" style="margin-top:14px">Save changes</button></form></div>`;
   document.getElementById('modal').classList.remove('hidden');
   document.getElementById('editMemberForm').addEventListener('submit', (e)=>saveMember(e,id));
 }
@@ -842,6 +890,8 @@ async function saveMember(e,id){
   e.preventDefault();
   const u=cache.members.find(x=>x.id===id);
   const patch={name:document.getElementById('eun').value.trim(), role:document.getElementById('eur').value, shop_id:document.getElementById('eus').value||null};
+  const file=document.getElementById('euavatar').files[0];
+  if(file){ try{ patch.avatar=await readImageAsDataURL(file); }catch(err){ toast(err.message); return; } }
   const {error}=await sb.from('members').update(patch).eq('id',id);
   if(error){ toast(error.message); return; }
   Object.assign(u,patch); closeModal(); renderView(); toast('Account updated');
@@ -859,7 +909,7 @@ async function deleteMember(id){
 function settingsView(){
   return `<div class="card"><div class="cardHead"><div><h3>Business identity</h3><p>Shown across the app, receipts and printed reports.</p></div></div>
   <form id="settingsForm"><div class="formGrid"><div class="field"><label>Business name</label><input id="bn" value="${esc(business.name)}" required></div><div class="field"><label>Short name / initials</label><input id="bs" maxlength="5" value="${esc(business.short)}"></div><div class="field"><label>Currency</label><input id="bc" value="${esc(business.currency)}"></div><div class="field"><label>Default tax %</label><input id="bt" type="number" min="0" value="${business.tax}"></div><div class="field"><label>Low stock threshold</label><input id="bl" type="number" min="0" value="${business.low_stock}"></div><div class="field"><label>Phone</label><input id="bph" value="${esc(business.phone)}"></div><div class="field"><label>Email</label><input id="bem" value="${esc(business.email)}"></div><div class="field"><label>Address</label><input id="bad" value="${esc(business.address)}"></div><div class="field" style="grid-column:1/-1"><label>Receipt footer</label><input id="brf" value="${esc(business.receipt_footer)}"></div></div><button class="btn primary" style="margin-top:16px">Save settings</button></form></div>
-  <div class="card"><div class="cardHead"><div><h3>Product categories</h3><p>Add categories that fit your business.</p></div></div><div class="actions">${cache.categories.map(c=>`<span class="tag ok">${esc(c.name)}</span>`).join('')}</div>
+  <div class="card"><div class="cardHead"><div><h3>Product categories</h3><p>Rename or remove categories. Renaming updates every product already using it.</p></div></div><div class="actions" style="flex-wrap:wrap;gap:8px">${cache.categories.map(c=>`<span class="tag ok" style="display:inline-flex;align-items:center;gap:8px">${esc(c.name)}<button class="btn small" style="padding:2px 8px" onclick="renameCategory('${esc(c.id)}','${esc(c.name)}')" title="Rename">✎</button><button class="btn small danger" style="padding:2px 8px" onclick="deleteCategory('${esc(c.id)}','${esc(c.name)}')" title="Delete">✕</button></span>`).join('')}</div>
   <form id="categoryForm" class="formActions" style="margin-top:14px"><div class="field" style="flex:1"><label>New category</label><input id="newcat" required></div><button class="btn">＋ Add</button></form></div>
   <div class="card"><div class="cardHead"><div><h3>Appearance</h3><p>Dark mode applies instantly and is remembered for your account.</p></div></div><button class="btn" onclick="toggleTheme()">Toggle dark / light mode</button></div>
   <div class="card"><div class="cardHead"><div><h3>About this deployment</h3></div></div><div class="notice">This edition stores everything in your own Supabase project (Postgres + Auth), so it works from any device and supports many independent businesses safely behind row-level security. See DEPLOY_INSTRUCTIONS.md for hosting steps.</div></div>`;
@@ -881,6 +931,27 @@ async function addCategory(e){
   const {data,error}=await sb.from('categories').insert({business_id:me.business_id,name}).select().single();
   if(error){ toast(error.message.includes('duplicate')?'That category already exists.':error.message); return; }
   cache.categories.push(data); renderView();
+}
+async function renameCategory(id,oldName){
+  const name=prompt('Rename category "'+oldName+'" to:',oldName);
+  if(!name||!name.trim()||name.trim()===oldName) return;
+  const clean=name.trim();
+  const {error}=await sb.from('categories').update({name:clean}).eq('id',id);
+  if(error){ toast(error.message.includes('duplicate')?'That category name already exists.':error.message); return; }
+  const c=cache.categories.find(x=>x.id===id); if(c) c.name=clean;
+  const affected=cache.products.filter(p=>p.category===oldName);
+  if(affected.length){ await sb.from('products').update({category:clean}).eq('business_id',me.business_id).eq('category',oldName); affected.forEach(p=>p.category=clean); }
+  renderView(); toast('Category renamed');
+}
+async function deleteCategory(id,name){
+  if(cache.categories.length<=1){ toast('You need at least one category.'); return; }
+  const inUse=cache.products.filter(p=>p.category===name).length;
+  if(inUse && !confirm(`${inUse} product(s) use "${name}". They'll be moved to the first remaining category. Continue?`)) return;
+  const {error}=await sb.from('categories').delete().eq('id',id);
+  if(error){ toast(error.message); return; }
+  cache.categories=cache.categories.filter(c=>c.id!==id);
+  if(inUse){ const fallback=cache.categories[0].name; await sb.from('products').update({category:fallback}).eq('business_id',me.business_id).eq('category',name); cache.products.filter(p=>p.category===name).forEach(p=>p.category=fallback); }
+  renderView(); toast('Category deleted');
 }
 function myStockView(){ storeFilter=me.shop_id; return inventoryView(); }
 
