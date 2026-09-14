@@ -217,7 +217,7 @@ tr:last-child td{border-bottom:0}
 const sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
 
 let session=null, me=null, business=null, view='login', authMode='login';
-let cache={shops:[],categories:[],products:[],stock:{},sales:[],saleLines:[],purchases:[],transfers:[],adjustments:[],expenses:[],activity:[],members:[]};
+let cache={shops:[],categories:[],products:[],stock:{},sales:[],saleLines:[],purchases:[],transfers:[],adjustments:[],expenses:[],activity:[],members:[],orders:[],orderItems:[]};
 let storeFilter='all', search='', cart=[], editing=null, scanner=null, registerBusy=false;
 let reportMonth=new Date().getMonth()+1, reportYear=new Date().getFullYear(), reportShop='all', reportType='month', reportQuarter=Math.ceil((new Date().getMonth()+1)/3);
 let sidebarCollapsed=localStorage.getItem('ubm_sidebar_collapsed')==='1';
@@ -289,7 +289,7 @@ async function loadMember(){
   render();
 }
 async function loadAllData(){
-  const [shops,categories,products,stockRows,sales,saleLines,purchases,transfers,adjustments,expenses,activity,members] = await Promise.all([
+  const [shops,categories,products,stockRows,sales,saleLines,purchases,transfers,adjustments,expenses,activity,members,orders,orderItems] = await Promise.all([
     sb.from('shops').select('*').order('created_at'),
     sb.from('categories').select('*').order('name'),
     sb.from('products').select('*').order('name'),
@@ -302,11 +302,13 @@ async function loadAllData(){
     sb.from('expenses').select('*').order('created_at',{ascending:false}),
     sb.from('activity_log').select('*').order('created_at',{ascending:false}).limit(60),
     sb.from('members').select('*'),
+    sb.from('orders').select('*').order('created_at',{ascending:false}),
+    sb.from('order_items').select('*'),
   ]);
   cache.shops=shops.data||[]; cache.categories=categories.data||[]; cache.products=products.data||[];
   cache.sales=sales.data||[]; cache.saleLines=saleLines.data||[]; cache.purchases=purchases.data||[];
   cache.transfers=transfers.data||[]; cache.adjustments=adjustments.data||[]; cache.expenses=expenses.data||[];
-  cache.activity=activity.data||[]; cache.members=members.data||[];
+  cache.activity=activity.data||[]; cache.members=members.data||[]; cache.orders=orders.data||[]; cache.orderItems=orderItems.data||[];
   cache.stock={};
   (stockRows.data||[]).forEach(r=>{const p=cache.products.find(x=>x.id===r.product_id); if(p){cache.stock[r.shop_id]=cache.stock[r.shop_id]||{};cache.stock[r.shop_id][p.code]=r.qty;}});
   if(cache.categories.length===0){
@@ -359,7 +361,7 @@ async function registerSubmit(e){
   await loadMember();
 }
 async function logout(){ await sb.auth.signOut(); session=null; me=null; business=null; cart=[]; view='login'; authMode='login'; render(); }
-function go(v){view=v;search='';render()}
+function go(v){ if(v==='orders'&&!can('manager')){ toast('Only owners and managers can access Orders.'); return; } view=v;search='';render()}
 function globalSearch(v){search=v; if(['products','inventory','sales'].includes(view)) renderView()}
 async function toggleTheme(){
   const cur=document.documentElement.getAttribute('data-theme')||'light';
@@ -412,7 +414,7 @@ function bindAuth(){
 function navItems(){
   if(me.role==='cashier') return [['dashboard','Dashboard','▦'],['pos','Point of Sale','▣'],['myStock','My Stock','▤'],['transfers','Transfers','⇄'],['purchases','Purchases','＋'],['sales','Sales History','◷'],['reports','Reports','▥']];
   if(me.role==='inventory') return [['dashboard','Dashboard','▦'],['products','Products &amp; Barcodes','◈'],['inventory','Inventory','▤'],['transfers','Transfers','⇄'],['purchases','Purchases','＋']];
-  return [['dashboard','Dashboard','▦'],['pos','Point of Sale','▣'],['products','Products &amp; Barcodes','◈'],['inventory','Inventory','▤'],['stores','Stores / Shops','⌂'],['transfers','Transfers','⇄'],['purchases','Purchases','＋'],['sales','Sales','◷'],['expenses','Expenses','−'],['reports','Reports','▥'],['users','Staff Accounts','♙'],['settings','Settings','⚙']];
+  return [['dashboard','Dashboard','▦'],['pos','Point of Sale','▣'],['products','Products &amp; Barcodes','◈'],['inventory','Inventory','▤'],['stores','Stores / Shops','⌂'],['transfers','Transfers','⇄'],['purchases','Purchases','＋'],['orders','Orders','⎘'],['sales','Sales','◷'],['expenses','Expenses','−'],['reports','Reports','▥'],['users','Staff Accounts','♙'],['settings','Settings','⚙']];
 }
 function lowStockCount(){let n=0;cache.shops.forEach(st=>cache.products.forEach(p=>{const q=stock(st.id,p.code);if(q<=threshold(p))n++}));return n}
 function layout(){
@@ -426,11 +428,11 @@ function layout(){
   <div class="user"><button class="themeBtn" onclick="toggleTheme()" title="Toggle dark mode">${dark?'☀️':'🌙'}</button><div><b>${esc(me.name)}</b><div class="muted" style="font-size:11px">${esc(roleName(me.role))}${me.shop_id?' · '+esc(shopObj(me.shop_id)?.name||''):''}</div></div>${me.avatar?`<img src="${me.avatar}" style="width:34px;height:34px;border-radius:50%;object-fit:cover">`:`<div class="avatar">${esc((me.name||'U').slice(0,1).toUpperCase())}</div>`}</div></header>
   <section class="content" id="content"></section></main></div>`;
 }
-function pageTitle(){return ({dashboard:'Dashboard',pos:'Point of Sale',products:'Products & Barcodes',inventory:'Inventory',stores:'Stores & Shops',transfers:'Stock Transfers',purchases:'Purchases',sales:'Sales History',expenses:'Expenses',reports:'Reports & Analytics',users:'Staff Accounts',settings:'Business Settings',myStock:'My Stock'}[view]||view)}
+function pageTitle(){return ({dashboard:'Dashboard',pos:'Point of Sale',products:'Products & Barcodes',inventory:'Inventory',stores:'Stores & Shops',transfers:'Stock Transfers',purchases:'Purchases',orders:'Purchase Orders',sales:'Sales History',expenses:'Expenses',reports:'Reports & Analytics',users:'Staff Accounts',settings:'Business Settings',myStock:'My Stock',inventoryReport:'Inventory Adjustment Report'}[view]||view)}
 function renderView(){
   document.title=pageTitle()+' — '+business.name;
-  document.getElementById('content').innerHTML=`<div class="pageHead"><div><h1>${pageTitle()}</h1><div class="muted">${dateOnly()} · ${storeFilter==='all'?'All locations':esc(shopObj(storeFilter)?.name||'')}</div></div><div class="actions">${view==='products'&&can('manager')?`<button class="btn primary" onclick="openProduct()">＋ New Product</button>`:''}${view==='reports'?`<button class="btn gold" onclick="window.print()">🖨 Print</button>`:''}</div></div>`
-    + ({dashboard,pos,products:productsView,inventory:inventoryView,stores:storesView,transfers:transfersView,purchases:purchasesView,sales:salesView,expenses:expensesView,reports:reportsView,users:usersView,settings:settingsView,myStock:myStockView}[view]||dashboard)();
+  document.getElementById('content').innerHTML=`<div class="pageHead"><div><h1>${pageTitle()}</h1><div class="muted">${dateOnly()} · ${storeFilter==='all'?'All locations':esc(shopObj(storeFilter)?.name||'')}</div></div><div class="actions">${view==='products'&&can('manager')?`<button class="btn primary" onclick="openProduct()">＋ New Product</button>`:''}${(view==='inventory'||view==='myStock')?`<button class="btn" onclick="go('inventoryReport')">📋 Adjustment history</button>`:''}${view==='reports'?`<button class="btn gold" onclick="window.print()">🖨 Print</button>`:''}</div></div>`
+    + ({dashboard,pos,products:productsView,inventory:inventoryView,stores:storesView,transfers:transfersView,purchases:purchasesView,orders:ordersView,sales:salesView,expenses:expensesView,reports:reportsView,users:usersView,settings:settingsView,myStock:myStockView,inventoryReport:inventoryReportView}[view]||dashboard)();
   renderBarcodes();
   bindViewEvents();
 }
@@ -526,7 +528,8 @@ async function adjustStock(e){
   if(!p){ toast('Select a valid product from the list'); return; }
   const code=p.code, n=Number(document.getElementById('aq').value), old=stock(s,code);
   setStockLocal(s,code,n); await persistStock(s,code,n);
-  await sb.from('adjustments').insert({business_id:me.business_id,shop_id:s,product_id:p.id,old_qty:old,new_qty:n,reason:document.getElementById('ar').value,by_name:me.name});
+  const {data:adj}=await sb.from('adjustments').insert({business_id:me.business_id,shop_id:s,product_id:p.id,old_qty:old,new_qty:n,reason:document.getElementById('ar').value,by_name:me.name}).select().single();
+  if(adj) cache.adjustments.unshift(adj);
   await logActivity('adjustment',`Stock adjusted: ${p.name} at ${shopObj(s)?.name} (${old} → ${n})`);
   renderView(); toast('Stock adjusted');
 }
@@ -568,13 +571,17 @@ async function deleteStore(sid){
 function transfersView(){
   const locked=me.role==='cashier'; const myShop=shopObj(me.shop_id);
   const list=locked ? cache.transfers.filter(t=>t.from_shop===me.shop_id||t.to_shop===me.shop_id) : cache.transfers;
-  return `<div class="card"><div class="cardHead"><div><h3>Transfer stock</h3><p>${locked?`Send stock from <b>${esc(myShop?.name||'your shop')}</b> to any other location, or receive into it.`:'Move inventory between any two locations with an audit trail.'}</p></div></div>
+  const pending=list.filter(t=>t.status==='pending'), done=list.filter(t=>t.status!=='pending');
+  const canReceive=(t)=>can('manager')||t.to_shop===me.shop_id;
+  return `<div class="card"><div class="cardHead"><div><h3>Transfer stock</h3><p>${locked?`Send stock from <b>${esc(myShop?.name||'your shop')}</b> to any other location, or receive into it.`:'Move inventory between any two locations with an audit trail.'} Stock leaves the sender immediately but only joins the receiver once they confirm receipt.</p></div></div>
   <form id="transferForm" class="formGrid">
   <div class="field"><label>From</label>${locked?`<select id="tf" disabled><option value="${me.shop_id}">${esc(myShop?.name)}</option></select><input type="hidden" id="tfHidden" value="${me.shop_id}">`:`<select id="tf">${cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>`}</div>
   <div class="field"><label>To</label><select id="tt">${cache.shops.filter(s=>!locked||s.id!==me.shop_id).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
   <div class="field"><label>Product / barcode</label><input id="tp" list="plist" required placeholder="Scan or type barcode / SKU"><datalist id="plist">${cache.products.map(p=>`<option value="${esc(p.barcode)}">${esc(p.name)}</option><option value="${esc(p.code)}">${esc(p.name)}</option>`).join('')}</datalist></div>
-  <div class="field"><label>Quantity</label><input id="tq" type="number" min="1" required></div><div class="field"><label>Reference / note</label><input id="tn"></div><button class="btn gold">⇄ Transfer</button></form></div>
-  <div class="card"><div class="tableWrap"><table><thead><tr><th>Date</th><th>From</th><th>To</th><th>Product</th><th>Qty</th><th>By</th><th>Note</th></tr></thead><tbody>${list.slice(0,100).map(t=>`<tr><td>${t.date}</td><td>${esc(shopObj(t.from_shop)?.name)}</td><td>${esc(shopObj(t.to_shop)?.name)}</td><td>${esc(productById(t.product_id)?.name||'')}</td><td>${t.qty}</td><td>${esc(t.by_name)}</td><td>${esc(t.note||'')}</td></tr>`).join('')||'<tr><td colspan="7" class="empty">No transfers.</td></tr>'}</tbody></table></div></div>`;
+  <div class="field"><label>Quantity</label><input id="tq" type="number" min="1" required></div><div class="field"><label>Reference / note</label><input id="tn"></div><button class="btn gold">⇄ Send transfer</button></form></div>
+  ${pending.length?`<div class="card"><div class="cardHead"><div><h3>Pending — awaiting receipt</h3><p>Stock has already left the sender's shop and is "in transit" until confirmed.</p></div></div>
+  <div class="tableWrap"><table><thead><tr><th>Date</th><th>From</th><th>To</th><th>Product</th><th>Qty</th><th>Sent by</th><th>Note</th><th></th></tr></thead><tbody>${pending.map(t=>`<tr><td>${t.date}</td><td>${esc(shopObj(t.from_shop)?.name)}</td><td>${esc(shopObj(t.to_shop)?.name)}</td><td>${esc(productById(t.product_id)?.name||'')}</td><td>${t.qty}</td><td>${esc(t.by_name)}</td><td>${esc(t.note||'')}</td><td>${canReceive(t)?`<button class="btn small primary" onclick="confirmTransferReceipt('${t.id}')">✔ Confirm received</button>`:'<span class="muted">Awaiting receiver</span>'}</td></tr>`).join('')}</tbody></table></div></div>`:''}
+  <div class="card"><div class="cardHead"><div><h3>Completed transfers</h3></div></div><div class="tableWrap"><table><thead><tr><th>Date</th><th>From</th><th>To</th><th>Product</th><th>Qty</th><th>Sent by</th><th>Received by</th><th>Note</th></tr></thead><tbody>${done.slice(0,100).map(t=>`<tr><td>${t.date}</td><td>${esc(shopObj(t.from_shop)?.name)}</td><td>${esc(shopObj(t.to_shop)?.name)}</td><td>${esc(productById(t.product_id)?.name||'')}</td><td>${t.qty}</td><td>${esc(t.by_name)}</td><td>${t.received_by?esc(t.received_by):'—'}</td><td>${esc(t.note||'')}</td></tr>`).join('')||'<tr><td colspan="8" class="empty">No completed transfers yet.</td></tr>'}</tbody></table></div></div>`;
 }
 function bindTransferForm(){ const f=document.getElementById('transferForm'); if(f) f.addEventListener('submit', doTransfer); }
 async function doTransfer(e){
@@ -582,12 +589,22 @@ async function doTransfer(e){
   const locked=me.role==='cashier';
   const from=locked?me.shop_id:document.getElementById('tf').value, to=document.getElementById('tt').value, input=document.getElementById('tp').value.trim(), p=product(input), q=Number(document.getElementById('tq').value);
   if(from===to||!p||q<1||q>stock(from,p.code)){ toast('Check source, destination, product and available stock'); return; }
-  setStockLocal(from,p.code,stock(from,p.code)-q); setStockLocal(to,p.code,stock(to,p.code)+q);
-  await persistStock(from,p.code,stock(from,p.code)); await persistStock(to,p.code,stock(to,p.code));
-  const {data}=await sb.from('transfers').insert({business_id:me.business_id,from_shop:from,to_shop:to,product_id:p.id,qty:q,note:document.getElementById('tn').value.trim(),by_name:me.name}).select().single();
+  setStockLocal(from,p.code,stock(from,p.code)-q); await persistStock(from,p.code,stock(from,p.code));
+  const {data}=await sb.from('transfers').insert({business_id:me.business_id,from_shop:from,to_shop:to,product_id:p.id,qty:q,note:document.getElementById('tn').value.trim(),by_name:me.name,status:'pending'}).select().single();
   cache.transfers.unshift(data);
-  await logActivity('transfer',`${q} × ${p.name} transferred from ${shopObj(from)?.name} to ${shopObj(to)?.name}`);
-  renderView(); toast('Transfer recorded — stock updated at both locations');
+  await logActivity('transfer',`${q} × ${p.name} sent from ${shopObj(from)?.name} to ${shopObj(to)?.name} — pending receipt`);
+  renderView(); toast('Transfer sent — stock will join the destination once they confirm receipt');
+}
+async function confirmTransferReceipt(id){
+  const t=cache.transfers.find(x=>x.id===id); if(!t||t.status!=='pending') return;
+  if(!(can('manager')||t.to_shop===me.shop_id)){ toast('Only the receiving shop (or an owner/manager) can confirm this.'); return; }
+  const p=productById(t.product_id); if(!p) return;
+  setStockLocal(t.to_shop,p.code,stock(t.to_shop,p.code)+Number(t.qty)); await persistStock(t.to_shop,p.code,stock(t.to_shop,p.code));
+  const patch={status:'completed',received_by:me.name,received_at:new Date().toISOString()};
+  await sb.from('transfers').update(patch).eq('id',id);
+  Object.assign(t,patch);
+  await logActivity('transfer',`${t.qty} × ${p.name} receipt confirmed at ${shopObj(t.to_shop)?.name} by ${me.name}`);
+  renderView(); toast('Receipt confirmed — stock updated');
 }
 
 /* ---------------- PURCHASES ---------------- */
@@ -607,6 +624,7 @@ async function receivePurchase(e){
   setStockLocal(s,p.code,stock(s,p.code)+q); await persistStock(s,p.code,stock(s,p.code));
   const {data}=await sb.from('purchases').insert({business_id:me.business_id,shop_id:s,product_id:p.id,qty:q,cost,supplier:document.getElementById('psup').value.trim(),ref:document.getElementById('pref').value.trim(),by_name:me.name}).select().single();
   cache.purchases.unshift(data);
+  await fulfillOrderItems(p.id,s,q,me.name);
   await logActivity('purchase',`${q} × ${p.name} received at ${shopObj(s)?.name}`);
   renderView(); toast('Purchase received — stock updated');
 }
@@ -735,8 +753,16 @@ function salesView(){
   const rev=list.reduce((a,s)=>a+Number(s.total),0);
   return `<div class="grid g3"><div class="kpi"><div class="label">Transactions</div><div class="value">${list.length}</div></div><div class="kpi"><div class="label">Sales value</div><div class="value">${money(rev)}</div></div><div class="kpi"><div class="label">Average sale</div><div class="value">${money(list.length?rev/list.length:0)}</div></div></div>
   <div class="card"><div class="searchLine"><input id="searchBox" value="${esc(search)}" oninput="liveSearch(this)" placeholder="Search receipt, customer, cashier or product…"><button class="btn" onclick="search='';renderView()">Clear</button></div>
-  <div class="tableWrap"><table><thead><tr><th>Receipt</th><th>Date</th><th>Location</th><th>Customer</th><th>Cashier</th><th>Items</th><th>Payment</th><th>Total</th><th></th></tr></thead><tbody>${list.map(s=>`<tr><td class="mono">${s.receipt}</td><td>${s.date}<br><small>${s.time}</small></td><td>${esc(shopObj(s.shop_id)?.name)}</td><td>${esc(s.customer)}</td><td>${esc(s.cashier_name)}</td><td>${linesFor(s.id).reduce((a,l)=>a+Number(l.qty),0)}</td><td>${esc(s.payment)}</td><td><b>${money(s.total)}</b></td><td><button class="btn small" onclick="showReceiptById('${s.id}')">Receipt</button></td></tr>`).join('')||'<tr><td colspan="9" class="empty">No sales found.</td></tr>'}</tbody></table></div></div>`;
+  <div class="tableWrap"><table><thead><tr><th></th><th>Receipt</th><th>Date</th><th>Location</th><th>Customer</th><th>Cashier</th><th>Items</th><th>Payment</th><th>Total</th><th></th></tr></thead><tbody>${list.map(s=>{
+    const lines=linesFor(s.id);
+    const detailRows=lines.map(l=>{ const prod=productById(l.product_id); const cost=prod?Number(prod.cost):null; const margin=cost!==null?(Number(l.price)-cost)*Number(l.qty):null;
+      return `<tr class="saleDetailLine"><td></td><td colspan="2" class="mono">${esc(l.code||'')}</td><td colspan="2">${esc(l.name)}</td><td>Qty ${l.qty}</td><td>Cost ${cost!==null?money(cost):'—'}</td><td>Sold @ ${money(l.price)}</td><td colspan="2">${margin!==null?`Margin ${money(margin)}`:''}</td></tr>`;
+    }).join('');
+    return `<tr onclick="toggleSaleDetail('${s.id}')" style="cursor:pointer"><td>▸</td><td class="mono">${s.receipt}</td><td>${s.date}<br><small>${s.time}</small></td><td>${esc(shopObj(s.shop_id)?.name)}</td><td>${esc(s.customer)}</td><td>${esc(s.cashier_name)}</td><td>${lines.reduce((a,l)=>a+Number(l.qty),0)}</td><td>${esc(s.payment)}</td><td><b>${money(s.total)}</b></td><td><button class="btn small" onclick="event.stopPropagation();showReceiptById('${s.id}')">Receipt</button></td></tr>
+    <tr id="detail-${s.id}" class="hidden"><td colspan="10" style="padding:0"><table style="width:100%;background:rgba(128,128,128,.06)"><tbody>${detailRows}</tbody></table></td></tr>`;
+  }).join('')||'<tr><td colspan="10" class="empty">No sales found.</td></tr>'}</tbody></table></div></div>`;
 }
+function toggleSaleDetail(id){ const row=document.getElementById('detail-'+id); if(row) row.classList.toggle('hidden'); }
 function showReceiptById(id){ const s=cache.sales.find(x=>x.id===id); if(s) showReceipt(s); }
 
 /* ---------------- EXPENSES ---------------- */
@@ -952,6 +978,90 @@ async function deleteCategory(id,name){
   cache.categories=cache.categories.filter(c=>c.id!==id);
   if(inUse){ const fallback=cache.categories[0].name; await sb.from('products').update({category:fallback}).eq('business_id',me.business_id).eq('category',name); cache.products.filter(p=>p.category===name).forEach(p=>p.category=fallback); }
   renderView(); toast('Category deleted');
+}
+/* ---------------- ORDERS ---------------- */
+let orderDraft=[];
+function ordersView(){
+  const shopOptions=cache.shops.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  const draftRows=orderDraft.map((l,i)=>`<tr><td>${esc(l.name)}</td><td class="mono">${esc(l.code)}</td><td class="num">${l.qty}</td><td><button class="btn small danger" onclick="removeFromOrderDraft(${i})">✕</button></td></tr>`).join('');
+  const openOrders=cache.orders.filter(o=>o.status!=='received');
+  const closedOrders=cache.orders.filter(o=>o.status==='received');
+  const itemsOf=(oId)=>cache.orderItems.filter(i=>i.order_id===oId);
+  const orderCard=(o)=>{
+    const items=itemsOf(o.id);
+    return `<div class="card"><div class="cardHead"><div><h3>Order for ${esc(shopObj(o.shop_id)?.name||'—')} ${o.ref?`· ${esc(o.ref)}`:''}</h3><p>Placed ${new Date(o.created_at).toLocaleString()} by ${esc(o.created_by)}${o.note?' — '+esc(o.note):''}</p></div><span class="tag ${o.status==='received'?'ok':o.status==='partial'?'low':'out'}">${o.status}</span></div>
+    <div class="tableWrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Ordered</th><th>Received</th><th>Status</th><th>Received by</th><th></th></tr></thead><tbody>${items.map(it=>`<tr><td>${esc(productById(it.product_id)?.name||'')}</td><td class="mono">${esc(productById(it.product_id)?.code||'')}</td><td class="num">${it.qty_ordered}</td><td class="num">${it.qty_received}</td><td><span class="tag ${it.status==='received'?'ok':'low'}">${it.status}</span></td><td>${it.received_by?esc(it.received_by)+' · '+new Date(it.received_at).toLocaleDateString():'—'}</td><td>${it.status==='received'&&can('manager')?`<button class="btn small" onclick="confirmOrderItem('${it.id}')">Confirm &amp; remove</button>`:''}</td></tr>`).join('')}</tbody></table></div></div>`;
+  };
+  return `<div class="card"><div class="cardHead"><div><h3>Place a new order</h3><p>Order products that are already registered in the system. Whoever receives the delivery (owner, manager or the shop's cashier doing Purchases) will automatically mark it received here.</p></div></div>
+  <div class="formGrid"><div class="field"><label>Deliver to (shop)</label><select id="ordShop">${shopOptions}</select></div><div class="field"><label>Reference (optional)</label><input id="ordRef" placeholder="PO number, supplier, etc."></div></div>
+  <div class="formGrid" style="margin-top:6px"><div class="field"><label>Product</label><input id="ordProd" list="ordPlist" placeholder="Type product name, SKU or barcode…"><datalist id="ordPlist">${cache.products.map(p=>`<option value="${esc(p.code)}">${esc(p.name)}</option>`).join('')}</datalist></div><div class="field"><label>Quantity</label><input id="ordQty" type="number" min="1" value="1"></div><div class="field" style="align-self:end"><button type="button" class="btn" onclick="addToOrderDraft()">＋ Add to order</button></div></div>
+  ${orderDraft.length?`<div class="tableWrap" style="margin-top:10px"><table><thead><tr><th>Product</th><th>SKU</th><th>Qty</th><th></th></tr></thead><tbody>${draftRows}</tbody></table></div><div class="field" style="margin-top:10px"><label>Note (optional)</label><input id="ordNote"></div><button class="btn primary" style="margin-top:10px" onclick="submitOrder()">Place order (${orderDraft.length} item(s))</button>`:'<p class="muted" style="margin-top:10px">Add at least one product above to place an order.</p>'}</div>
+  ${openOrders.length?`<h3 style="margin:18px 0 8px">Pending / partial orders</h3>${openOrders.map(orderCard).join('')}`:''}
+  ${closedOrders.length?`<h3 style="margin:18px 0 8px">Completed orders</h3>${closedOrders.slice(0,10).map(orderCard).join('')}`:'<p class="muted" style="margin-top:10px">No completed orders yet.</p>'}`;
+}
+function addToOrderDraft(){
+  const raw=document.getElementById('ordProd').value.trim();
+  const p=product(raw)||cache.products.find(x=>x.name.toLowerCase()===raw.toLowerCase());
+  const q=Number(document.getElementById('ordQty').value)||0;
+  if(!p||q<1){ toast('Select a valid product and quantity'); return; }
+  const existing=orderDraft.find(l=>l.code===p.code);
+  if(existing) existing.qty+=q; else orderDraft.push({product_id:p.id,code:p.code,name:p.name,qty:q});
+  document.getElementById('ordProd').value=''; document.getElementById('ordQty').value='1';
+  renderView();
+}
+function removeFromOrderDraft(i){ orderDraft.splice(i,1); renderView(); }
+async function submitOrder(){
+  if(!orderDraft.length) return;
+  const shopId=document.getElementById('ordShop').value;
+  const ref=document.getElementById('ordRef').value.trim();
+  const note=document.getElementById('ordNote')?.value.trim()||'';
+  const {data:order,error}=await sb.from('orders').insert({business_id:me.business_id,shop_id:shopId,ref,note,status:'pending',created_by:me.name}).select().single();
+  if(error){ toast(error.message); return; }
+  const rows=orderDraft.map(l=>({order_id:order.id,business_id:me.business_id,product_id:l.product_id,shop_id:shopId,qty_ordered:l.qty,qty_received:0,status:'pending'}));
+  const {data:items,error:itemErr}=await sb.from('order_items').insert(rows).select();
+  if(itemErr){ toast(itemErr.message); return; }
+  cache.orders.unshift(order); cache.orderItems.push(...items);
+  await logActivity('order',`Order placed for ${shopObj(shopId)?.name}: ${orderDraft.length} product(s)`);
+  orderDraft=[]; renderView(); toast('Order placed');
+}
+async function fulfillOrderItems(productId,shopId,qty,receiverName){
+  const openItems=cache.orderItems.filter(it=>it.product_id===productId && it.shop_id===shopId && it.status==='pending');
+  let remaining=qty;
+  for(const it of openItems){
+    if(remaining<=0) break;
+    const need=it.qty_ordered-it.qty_received; if(need<=0) continue;
+    const take=Math.min(need,remaining); remaining-=take;
+    const newReceived=it.qty_received+take; const newStatus=newReceived>=it.qty_ordered?'received':'pending';
+    const patch={qty_received:newReceived,status:newStatus,received_by:receiverName,received_at:new Date().toISOString()};
+    await sb.from('order_items').update(patch).eq('id',it.id);
+    Object.assign(it,patch);
+  }
+  const openOrderIds=[...new Set(openItems.map(it=>it.order_id))];
+  for(const oid of openOrderIds){
+    const items=cache.orderItems.filter(it=>it.order_id===oid);
+    const allReceived=items.every(it=>it.status==='received');
+    const anyReceived=items.some(it=>it.qty_received>0);
+    const newStatus=allReceived?'received':(anyReceived?'partial':'pending');
+    const ord=cache.orders.find(o=>o.id===oid);
+    if(ord && ord.status!==newStatus){ ord.status=newStatus; await sb.from('orders').update({status:newStatus}).eq('id',oid); }
+  }
+}
+async function confirmOrderItem(itemId){
+  if(!can('manager')) return;
+  const it=cache.orderItems.find(x=>x.id===itemId); if(!it) return;
+  await sb.from('order_items').delete().eq('id',itemId);
+  cache.orderItems=cache.orderItems.filter(x=>x.id!==itemId);
+  const remaining=cache.orderItems.filter(x=>x.order_id===it.order_id);
+  if(remaining.length===0){ await sb.from('orders').delete().eq('id',it.order_id); cache.orders=cache.orders.filter(o=>o.id!==it.order_id); }
+  renderView(); toast('Order item confirmed and removed');
+}
+
+/* ---------------- INVENTORY ADJUSTMENT REPORT ---------------- */
+function inventoryReportView(){
+  let rows=[...cache.adjustments];
+  if(me.role==='cashier') rows=rows.filter(a=>a.shop_id===me.shop_id);
+  return `<div class="card"><div class="cardHead"><div><h3>Inventory adjustment history</h3><p>Every stock count correction, with quantity before/after and the reason given — helps catch mistakes or discrepancies early.</p></div></div>
+  <div class="tableWrap"><table><thead><tr><th>Date</th><th>Location</th><th>Product</th><th>Before</th><th>After</th><th>Difference</th><th>Reason</th><th>By</th></tr></thead><tbody>${rows.map(a=>{const diff=Number(a.new_qty)-Number(a.old_qty); return `<tr><td>${new Date(a.created_at).toLocaleString()}</td><td>${esc(shopObj(a.shop_id)?.name||'')}</td><td>${esc(productById(a.product_id)?.name||'')}</td><td class="num">${a.old_qty}</td><td class="num">${a.new_qty}</td><td class="num ${diff<0?'bad':diff>0?'ok':''}">${diff>0?'+':''}${diff}</td><td>${esc(a.reason||'')}</td><td>${esc(a.by_name)}</td></tr>`}).join('')||'<tr><td colspan="8" class="empty">No adjustments recorded yet.</td></tr>'}</tbody></table></div></div>`;
 }
 function myStockView(){ storeFilter=me.shop_id; return inventoryView(); }
 
