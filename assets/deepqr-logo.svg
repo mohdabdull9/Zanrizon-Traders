@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="DeepQr">
+  <defs>
+    <linearGradient id="dqBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0A1A44"/>
+      <stop offset="1" stop-color="#1D3FB8"/>
+    </linearGradient>
+    <linearGradient id="dqTeal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2EE6C5"/>
+      <stop offset="1" stop-color="#11A7D9"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#dqBg)"/>
+  <!-- D-shaped finder ring: a QR finder pattern whose right side bends into the letter D -->
+  <path d="M15 15h18a17 17 0 0 1 17 17v0a17 17 0 0 1-17 17H15z" fill="none" stroke="#fff" stroke-width="5.5" stroke-linejoin="round"/>
+  <!-- core module -->
+  <rect x="22" y="23" width="14" height="18" rx="3.5" fill="url(#dqTeal)"/>
+  <!-- depth steps: modules sinking toward the corner -->
+  <rect x="45" y="45" width="6" height="6" rx="1.5" fill="#2EE6C5" opacity=".95"/>
+  <rect x="52" y="52" width="4.5" height="4.5" rx="1.2" fill="#2EE6C5" opacity=".6"/>
+  <rect x="8" y="52" width="4.5" height="4.5" rx="1.2" fill="#fff" opacity=".35"/>
+</svg>
