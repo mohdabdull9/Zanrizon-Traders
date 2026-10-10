@@ -68,13 +68,13 @@ do $$ declare r record; begin
 end $$;
 
 update public.shops s set code = x.c from (
-  select id, 'S' || lpad(row_number() over (partition by business_id order by created_at)::text, 2, '0') c
+  select id, 'S' || lpad(row_number() over (partition by business_id order by created_at)::text, 2, '0') as c
   from public.shops where code is null) x
 where s.id = x.id;
 
 update public.products p set product_no = x.n from (
   select id, coalesce((select max(product_no) from public.products p2 where p2.business_id = p1.business_id),0)
-            + row_number() over (partition by business_id order by created_at, name) n
+            + row_number() over (partition by business_id order by created_at, name) as n
   from public.products p1 where product_no is null) x
 where p.id = x.id;
 
@@ -364,7 +364,7 @@ begin
          f,
          greatest(ceil(sl.qty)::int - coalesce(t.n,0)::int, 0) * f
   from stock_levels sl
-  left join (select pi.product_id, pi.shop_id, count(*) n from product_items pi
+  left join (select pi.product_id, pi.shop_id, count(*) as n from product_items pi
               where pi.business_id = b and pi.status = 'in_stock' group by 1,2) t
          on t.product_id = sl.product_id and t.shop_id = sl.shop_id
   where sl.business_id = b;
@@ -497,7 +497,7 @@ begin
   end loop;
 
   -- stock check per product (all lines, serial + plain)
-  for agg in select (x->>'product_id')::uuid pid, sum((x->>'qty')::numeric) q, max(x->>'name') nm
+  for agg in select (x->>'product_id')::uuid as pid, sum((x->>'qty')::numeric) as q, max(x->>'name') as nm
                from jsonb_array_elements(lines_out) x group by 1 loop
     select sl.qty into have from stock_levels sl where sl.shop_id = p_shop_id and sl.product_id = agg.pid for update;
     if coalesce(have,0) < agg.q then raise exception 'NOT_ENOUGH_STOCK: only % of % in stock at this shop', coalesce(have,0), agg.nm; end if;
@@ -527,7 +527,7 @@ begin
    where id in (select nullif(x->>'item_id','')::uuid from jsonb_array_elements(lines_out) x);
 
   update stock_levels sl set qty = sl.qty - a.q
-    from (select (x->>'product_id')::uuid pid, sum((x->>'qty')::numeric) q from jsonb_array_elements(lines_out) x group by 1) a
+    from (select (x->>'product_id')::uuid as pid, sum((x->>'qty')::numeric) as q from jsonb_array_elements(lines_out) x group by 1) a
    where sl.shop_id = p_shop_id and sl.product_id = a.pid;
 
   insert into activity_log(business_id, type, description, by_name)
@@ -635,28 +635,28 @@ begin
     'settings', (select row_to_json(s) from platform_settings s where id = 1),
     'businesses', coalesce((select json_agg(x order by x.created_at desc) from (
         select b.id, b.name, b.code, b.currency, b.phone, b.email, b.address, b.created_at,
-               (select email from auth.users u where u.id = b.owner_auth_id) owner_email,
-               (select name from members mm where mm.business_id = b.id and mm.role = 'owner' limit 1) owner_name,
+               (select email from auth.users u where u.id = b.owner_auth_id) as owner_email,
+               (select name from members mm where mm.business_id = b.id and mm.role = 'owner' limit 1) as owner_name,
                a.status, a.balance, a.total_qr, a.total_spent, a.status_note,
-               (select count(*) from shops where business_id = b.id) shops,
-               (select count(*) from members where business_id = b.id) staff,
-               (select count(*) from products where business_id = b.id) products,
-               (select count(*) from product_items where business_id = b.id and status = 'in_stock') items_in_stock,
-               (select count(*) from product_items where business_id = b.id and status = 'sold') items_sold,
-               (select count(*) from sales where business_id = b.id and status <> 'refunded') sales_count,
-               (select coalesce(sum(total),0) from sales where business_id = b.id and status <> 'refunded') sales_total,
-               (select coalesce(sum(total),0) from sales where business_id = b.id and status <> 'refunded' and date >= current_date - 30) sales_30d,
-               (select max(created_at) from activity_log where business_id = b.id) last_active,
-               (select count(*) from devices where business_id = b.id and status = 'approved') devices
+               (select count(*) from shops where business_id = b.id) as shops,
+               (select count(*) from members where business_id = b.id) as staff,
+               (select count(*) from products where business_id = b.id) as products,
+               (select count(*) from product_items where business_id = b.id and status = 'in_stock') as items_in_stock,
+               (select count(*) from product_items where business_id = b.id and status = 'sold') as items_sold,
+               (select count(*) from sales where business_id = b.id and status <> 'refunded') as sales_count,
+               (select coalesce(sum(total),0) from sales where business_id = b.id and status <> 'refunded') as sales_total,
+               (select coalesce(sum(total),0) from sales where business_id = b.id and status <> 'refunded' and date >= current_date - 30) as sales_30d,
+               (select max(created_at) from activity_log where business_id = b.id) as last_active,
+               (select count(*) from devices where business_id = b.id and status = 'approved') as devices
         from businesses b left join dq_accounts a on a.business_id = b.id) x), '[]'::json),
     'topups', coalesce((select json_agg(row_to_json(t) order by t.created_at desc) from (
-        select r.*, b.name business_name, b.code business_code from topup_requests r join businesses b on b.id = r.business_id
+        select r.*, b.name as business_name, b.code as business_code from topup_requests r join businesses b on b.id = r.business_id
         order by r.created_at desc limit 200) t), '[]'::json),
     'ledger', coalesce((select json_agg(row_to_json(t)) from (
-        select w.*, b.name business_name from wallet_transactions w join businesses b on b.id = w.business_id
+        select w.*, b.name as business_name from wallet_transactions w join businesses b on b.id = w.business_id
         order by w.created_at desc limit 300) t), '[]'::json),
     'qr_by_month', coalesce((select json_agg(row_to_json(t) order by t.month) from (
-        select to_char(date_trunc('month', created_at),'YYYY-MM') month, sum(qty) qrs, sum(total) revenue
+        select to_char(date_trunc('month', created_at),'YYYY-MM') as month, sum(qty) as qrs, sum(total) as revenue
         from qr_generations where created_at > now() - interval '12 months' group by 1) t), '[]'::json)
   );
 end $$;
