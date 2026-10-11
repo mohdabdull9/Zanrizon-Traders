@@ -2,38 +2,61 @@
 
 <img src="assets/deepqr-logo.svg" width="72" alt="DeepQr logo">
 
-**DeepQr** (formerly Zanrizon Traders) is a multi-business management system. Every physical item gets its own secure QR code. One scan identifies the business, the shop and the product, and records the sale.
+**DeepQr** (formerly Zanrizon Traders) is a multi-business POS and business management system. Every physical item gets its own secure QR code. One scan identifies the business, the shop and the product, and records the sale.
 
-It is a single-page app (`index.html`) backed by Supabase (Postgres, Auth and row-level security). Host it on GitHub Pages, Netlify or any static host.
+It is a static single-page app (`index.html` + `css/` + `js/`) backed by Supabase (Postgres, Auth, Storage and row-level security). Host it on GitHub Pages, Netlify or any static host.
 
 ## What's inside
 
 | Area | What it does |
 |---|---|
-| **Item QR codes** | Each item gets a unique code: `DQ1 \| business \| shop \| product \| serial`. The serial is `year + product number + item number`, e.g. `2026` `12` `001` → **202612001**, then 202612002… |
-| **Scan → cart → receipt** | Scan items one after another into the cart (QR or legacy barcode). Then create one receipt with discount, payment method, amount received and change. The same QR can never be sold twice. |
-| **Expiry detection** | Enter an expiry date per QR batch or per purchase. The Expiry tracker and dashboard show expired items and items expiring soon. The scanner and the server refuse expired items (configurable). Expired items can be written off. |
-| **Authorised devices** | Optionally only registered and approved smartphones or hardware scanners can sell. Choose camera-only, hardware-only or both. Device keys are stored hashed. |
-| **QR billing** | Generating QR codes costs a fee per code (default **25 TZS**) taken from a prepaid wallet. Businesses submit mobile-money top-up requests, and the platform owner approves them. |
-| **Recommendations** | For every product and shop: stock on hand − items already tagged = recommended QR codes and estimated cost. You can generate them all in one click. |
-| **Platform owner portal** | See all businesses, their usage, sales and wallet. Approve top-ups, credit or debit wallets, suspend or activate businesses, set the QR fee, welcome credit and payment instructions, and view the ledger. |
-| **Also** | Refunds (items and stock go back), CSV export of sales and inventory, receipt QR, dark mode, mobile layout, plus all the original stock, transfer, purchase, order, expense, staff and report features. |
+| **Scan & Sell** | USB, Bluetooth and Android POS scanners (keyboard mode, with or without an Enter suffix, even when no field is selected), and phone/tablet cameras (back camera chosen automatically, camera switcher, torch). Labels that a scanner's keyboard layout mangles are still read. Scan into a cart, then take a split payment (cash + mobile money/card/bank, with a required reference). Also supports credit sales, loyalty points, discounts within each cashier's limit, held/parked sales, receipts by print or WhatsApp, and returns. |
+| **Till shifts** | Open a shift with a float, record cash in/out, and close with a counted cash-up. The difference is shown. Owners can require a shift before selling. |
+| **Customers & debts** | Customer accounts with a credit limit, a debt ledger, debt payments, a WhatsApp reminder and points. |
+| **Item QR codes** | `DQ1 \| business \| shop \| product \| serial`. The serial is `year + product number + item number`, e.g. **202612001**. Labels move with transfers, can be voided, and show a full history. Recommendations show how many labels are still needed. |
+| **Purchase orders** | Suppliers with payment terms. POs carry invoice number, amount and attached documents (PDF or photo, stored privately). Receive goods in several deliveries (GRNs), each line tracked as ordered / received / damaged / not received. The app warns when the invoice and delivery don't match, shows supplier balances and due dates, records supplier payments with receipts, lets you close an order short or cancel it, prints the PO, sends it by WhatsApp, and offers to print QR labels for received goods. |
+| **Inventory** | Stock levels and value; reorder suggestions turned into POs; stock takes by scanning; corrections with reasons; quick stock-in; transfers with in-transit tracking; expiry tracking with write-off; a product stock card. |
+| **Reports** | Overview with charts, profit & loss, products (including items that aren't selling), staff and shops, payment reconciliation, debtor aging, stock valuation, shift cash-ups. Every report has CSV export and print. |
+| **Staff & devices** | Roles plus per-person permissions (price edits, credit, refunds, reports, receiving, stock, max discount). Staff can be disabled. Devices are approved per shop. There is a scanner setup guide, a live scanner test page and per-device scanner settings. |
+| **QR wallet (credits)** | Main balance plus bonus credits (with expiry) and a free monthly quota. Top-up packages include bonuses. Top-ups are made by mobile money with a reference and confirmed manually; duplicate references are blocked. There are also promo codes, referral rewards and a full statement. |
+| **Owner portal** | Every business, with full control: users, shops and devices can be blocked or unblocked. Per business you can adjust the wallet (with a required note), grant bonuses, set a custom QR price, free quota, credit limit, plan and private notes, and suspend the business. The portal also covers top-up approval (with receipt numbers) and rejection (with a reason), packages, promo codes, bulk bonuses, referral/welcome settings, QR batch refunds, announcements, ledger, audit log, payment accounts and support contacts. |
 
-## Setup
+## Setup / upgrade
 
-1. **Database:** in Supabase open **SQL Editor**, paste the contents of `supabase/migrations/20261010120000_deepqr_core.sql` and run it. It only adds things; no existing data is removed.
-2. **Portal activation code:** the platform owner email is seeded as `mohdabdull129@gmail.com`. Set a one-time activation code (keep it private):
-   ```sql
-   update platform_admins
-      set claim_code_hash = encode(extensions.digest(upper('YOUR-CODE-HERE'), 'sha256'), 'hex')
-    where email = 'mohdabdull129@gmail.com';
-   ```
-   Then open the app, choose **Platform owner** and sign in with that email, your password and the code. The account is created if it doesn't exist. The code works once and binds the portal to that account.
-3. **Host** `index.html` and the `assets/` folder. The Supabase URL and anon key are at the top of `index.html`.
+Run the SQL files in Supabase → **SQL Editor** (paste the whole file into a new query and click **Run**). They only add things; no data is removed.
 
-Before step 1 is done, the app still runs as before and shows a "database update pending" banner.
+1. `supabase/migrations/20261010120000_deepqr_core.sql` (v1; skip it if you already ran it)
+2. `supabase/migrations/20261011120000_deepqr_v2.sql` (v2: credits, till, orders, documents, permissions, portal)
+3. Publish the app (merge to `main` for GitHub Pages).
+4. `supabase/migrations/20261011130000_deepqr_v2_hardening.sql`. Run this **after** the v2 app is live. It closes the old public username list.
+
+**Portal activation code.** The platform owner email is seeded as `mohdabdull129@gmail.com`. Set a one-time activation code (keep it private):
+
+```sql
+update platform_admins
+   set claim_code_hash = encode(extensions.digest(upper('YOUR-CODE-HERE'), 'sha256'), 'hex')
+ where email = 'mohdabdull129@gmail.com';
+```
+
+Then open the app, choose **Platform owner** and sign in with that email, your password and the code.
+
+The Supabase URL and anon key are in `js/config.js`. If the database is older than the app, the app shows a "database update" screen instead of failing.
 
 ## Tests
 
-* `supabase/tests/deepqr_db_test.sql`: database tests for billing, serials, scanning, checkout, expiry, refunds, device lock, top-ups, the portal, suspension and tenant isolation. Run it in a transaction (`begin;` + file). It ends by raising the report, which rolls everything back.
-* `tests/e2e_test.py`: browser tests (Playwright) that drive the real `index.html` against an in-memory mock (`tests/mock-supabase.js`). They cover all screens, QR generation, decoding a printed label, the scan-to-receipt flow, refunds, the device lock, the wallet, the cashier role, the owner portal and mobile layout.
+* `supabase/tests/deepqr_db_test.sql` (v1) and `supabase/tests/deepqr_v2_test.sql` (v2, 115 checks) test the database: credits, scanning, checkout, credit, loyalty, shifts, orders and receipts, transfers, stock takes, reports, the portal, permissions and tenant isolation. Run each in a transaction (`begin;` + file). It ends by raising the report, which rolls everything back.
+* `tests/e2e_test.py` runs browser tests (Playwright, 61 checks). They drive the real app against a real Postgres database through `tests/local_backend.py`, a small stand-in for the Supabase REST, Auth and Storage APIs. Coverage includes:
+  * top-up → portal approval
+  * promo codes, custom pricing, blocking users
+  * QR generation charged to free quota and then bonus
+  * USB / no-suffix / mangled-separator scanning
+  * phone-camera scanning, using a fake camera that shows a printed label
+  * hold/resume, split and credit payments
+  * POs with an invoice upload, partial delivery with damaged items, and supplier payment
+  * reports, the scanner test page, staff creation and settings
+
+  ```
+  supabase/tests/local/run.sh                    # fresh local database (Postgres on /tmp/pg:5433)
+  python3 tests/local_backend.py --port 54321 &
+  python3 tests/e2e_test.py <node_modules_dir> <screenshot_dir>
+  ```
