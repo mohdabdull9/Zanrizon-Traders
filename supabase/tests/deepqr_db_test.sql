@@ -22,7 +22,7 @@ select 'biz', b.id::text from businesses b where b.name = 'DEMO'
 union all select 'owner', m.auth_user_id::text from members m join businesses b on b.id=m.business_id where b.name='DEMO' and m.role='owner'
 union all select 'cashier', m.auth_user_id::text from members m join businesses b on b.id=m.business_id where b.name='DEMO' and m.role='cashier'
 union all select 'shop', m.shop_id::text from members m join businesses b on b.id=m.business_id where b.name='DEMO' and m.role='cashier'
-union all select 'other_owner', m.auth_user_id::text from members m join businesses b on b.id=m.business_id where b.name<>'DEMO' and m.role='owner' limit 1;
+union all (select 'other_owner', m.auth_user_id::text from members m join businesses b on b.id=m.business_id where b.name<>'DEMO' and m.role='owner' limit 1);
 
 -- give the test product plenty of stock at the cashier's shop
 insert into t_ctx select 'prod', p.id::text from products p where p.business_id = pg_temp.ctx('biz')::uuid order by p.created_at limit 1;
@@ -175,9 +175,11 @@ do $$ begin
   perform pg_temp.ok('top-up below minimum rejected', false);
 exception when others then perform pg_temp.ok('top-up below minimum rejected', true, sqlerrm); end $$;
 insert into t_ctx select 'topup', dq_request_topup(5000, 'M-Pesa', 'QWERTY12')->>'id';
-select pg_temp.ok('top-up approved credits wallet',
-  (dq_admin_review_topup(pg_temp.ctx('topup')::uuid, true, 'paid')->>'status') = 'approved'
-  and (select balance from dq_accounts where business_id = pg_temp.ctx('biz')::uuid) = 925 - 25 + 5000);
+reset role; insert into t_ctx select 'bal_before', balance::text from dq_accounts where business_id = pg_temp.ctx('biz')::uuid; set local role authenticated;
+select pg_temp.ok('top-up approval returns approved', (dq_admin_review_topup(pg_temp.ctx('topup')::uuid, true, 'paid')->>'status') = 'approved');
+select pg_temp.ok('top-up approved credits wallet (+5000)',
+  (select balance from dq_accounts where business_id = pg_temp.ctx('biz')::uuid) = pg_temp.ctx('bal_before')::numeric + 5000,
+  (select balance::text from dq_accounts where business_id = pg_temp.ctx('biz')::uuid));
 select pg_temp.ok('portal overview lists businesses', json_array_length(dq_admin_overview()->'businesses') >= 2);
 select pg_temp.ok('admin can change QR fee', (dq_admin_update_settings(30, 'TZS', 1000, 0, false, 'Pay to 0777')->>'qr_fee')::numeric = 30);
 do $$ declare r json; begin
@@ -211,9 +213,9 @@ select pg_temp.ok('other business cannot read this wallet', (select count(*) fro
 reset role;
 select pg_temp.ok('"inventory" staff role is now allowed',
   (select count(*) from (select 1 from pg_constraint where conname='members_role_check' and pg_get_constraintdef(oid) like '%inventory%') x) = 1);
-insert into products(business_id, code, name, barcode) values (pg_temp.ctx('biz')::uuid, 'D12', 'Dell 12', 'TEST-D12-BARCODE');
+insert into products(business_id, code, name, barcode) values (pg_temp.ctx('biz')::uuid, 'TSTX9', 'Test product', 'TEST-X9-BARCODE');
 select pg_temp.ok('new product gets next product number',
-  (select product_no from products where code='D12' and business_id = pg_temp.ctx('biz')::uuid) = (select max(product_no) from products where business_id = pg_temp.ctx('biz')::uuid));
+  (select product_no from products where code='TSTX9' and business_id = pg_temp.ctx('biz')::uuid) = (select max(product_no) from products where business_id = pg_temp.ctx('biz')::uuid));
 insert into shops(business_id, name) values (pg_temp.ctx('biz')::uuid, 'Test Branch');
 select pg_temp.ok('new shop gets a code', (select code from shops where name='Test Branch' and business_id = pg_temp.ctx('biz')::uuid) ~ '^S[0-9]{2,}$');
 

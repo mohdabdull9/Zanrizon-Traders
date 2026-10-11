@@ -1,0 +1,32 @@
+-- Test data: DEMO (owner + cashier, 2 shops, 3 products) and METRO ZONE SHOPS (owner).
+insert into auth.users(id,email) values
+ ('00000000-0000-4000-8000-0000000000a1','owner@demo.test'),
+ ('00000000-0000-4000-8000-0000000000a2','cashier.demo@staff.local'),
+ ('00000000-0000-4000-8000-0000000000a3','manager.demo@staff.local'),
+ ('00000000-0000-4000-8000-0000000000b1','owner@metro.test'),
+ ('00000000-0000-4000-8000-0000000000c1','mohdabdull129@gmail.com');
+insert into businesses(id,name,short,currency,owner_auth_id) values
+ ('00000000-0000-4000-8000-00000000b001','DEMO','DEM','TZS','00000000-0000-4000-8000-0000000000a1'),
+ ('00000000-0000-4000-8000-00000000b002','METRO ZONE SHOPS','MZS','TZS','00000000-0000-4000-8000-0000000000b1');
+insert into shops(id,business_id,name,type,created_at) values
+ ('00000000-0000-4000-8000-000000000501','00000000-0000-4000-8000-00000000b001','Main Store','warehouse',now()-interval '2 day'),
+ ('00000000-0000-4000-8000-000000000502','00000000-0000-4000-8000-00000000b001','MZ1','shop',now()-interval '1 day'),
+ ('00000000-0000-4000-8000-000000000503','00000000-0000-4000-8000-00000000b002','Metro Shop','shop',now());
+insert into members(business_id,auth_user_id,name,role,shop_id,username) values
+ ('00000000-0000-4000-8000-00000000b001','00000000-0000-4000-8000-0000000000a1','Muham Abdull','owner',null,null),
+ ('00000000-0000-4000-8000-00000000b001','00000000-0000-4000-8000-0000000000a2','demo1','cashier','00000000-0000-4000-8000-000000000502','demo1'),
+ ('00000000-0000-4000-8000-00000000b001','00000000-0000-4000-8000-0000000000a3','Mgr','manager',null,'mgr'),
+ ('00000000-0000-4000-8000-00000000b002','00000000-0000-4000-8000-0000000000b1','Metro Owner','owner',null,null);
+insert into products(id,business_id,code,name,cost,price,barcode,created_at) values
+ ('00000000-0000-4000-8000-000000000701','00000000-0000-4000-8000-00000000b001','D12','Dell 12',600000,750000,'B-D12',now()-interval '3 day'),
+ ('00000000-0000-4000-8000-000000000702','00000000-0000-4000-8000-00000000b001','HP12','Hp 12',500000,650000,'B-HP12',now()-interval '2 day'),
+ ('00000000-0000-4000-8000-000000000703','00000000-0000-4000-8000-00000000b001','MLK','Milk 1L',1800,2500,'B-MLK',now()-interval '1 day');
+insert into stock_levels values
+ ('00000000-0000-4000-8000-00000000b001','00000000-0000-4000-8000-000000000501','00000000-0000-4000-8000-000000000701',20),
+ ('00000000-0000-4000-8000-00000000b001','00000000-0000-4000-8000-000000000502','00000000-0000-4000-8000-000000000701',16),
+ ('00000000-0000-4000-8000-00000000b001','00000000-0000-4000-8000-000000000502','00000000-0000-4000-8000-000000000702',10),
+ ('00000000-0000-4000-8000-00000000b001','00000000-0000-4000-8000-000000000502','00000000-0000-4000-8000-000000000703',30);
+insert into username_directory(username, email, business_id) values ('demo1','cashier.demo@staff.local','00000000-0000-4000-8000-00000000b001');
+-- passwords used by tests/local_backend.py (sign-in for browser tests)
+create table if not exists auth.passwords (id uuid primary key, pw text);
+insert into auth.passwords select id, 'secret1' from auth.users on conflict do nothing;
