@@ -12,7 +12,7 @@ let cache = {
   shops: [], categories: [], products: [], stock: {}, sales: [], saleLines: [], purchases: [], transfers: [], adjustments: [],
   expenses: [], activity: [], members: [], orders: [], orderItems: [], items: [], generations: [], devices: [], topups: [],
   walletTx: [], recs: [], customers: [], suppliers: [], held: [], announcements: [], receipts: [], supplierPayments: [],
-  counts: [], shifts: []
+  counts: [], shifts: [], printOrders: []
 };
 let sidebarCollapsed = lsGet('dq_sidebar') === '1', mobileSidebarOpen = false;
 const PAGES = {};
@@ -261,19 +261,20 @@ async function loadAllData() {
   await loadDeepQr();
 }
 async function loadDeepQr() {
-  const [w, items, gens, devs, tops, wtx, recs] = await Promise.all([
+  const [w, items, gens, devs, tops, wtx, recs, prints] = await Promise.all([
     sb.rpc('dq_wallet'),
     sb.from('product_items').select('id,product_id,shop_id,serial,expiry_date,status,generation_id,qr_payload,batch_ref,created_at').in('status', ['in_stock', 'transit']).limit(20000),
     sb.from('qr_generations').select('*').order('created_at', { ascending: false }).limit(300),
     sb.from('devices').select('*').order('created_at', { ascending: false }),
     sb.from('topup_requests').select('*').order('created_at', { ascending: false }).limit(100),
     sb.from('wallet_transactions').select('*').order('created_at', { ascending: false }).limit(300),
-    sb.rpc('dq_qr_recommendations')
+    sb.rpc('dq_qr_recommendations'),
+    sb.from('qr_print_orders').select('*').order('created_at', { ascending: false }).limit(100)
   ]);
   wallet = w.data || wallet || {};
   platform = { ...platform, currency: wallet.currency || platform.currency, qr_fee: wallet.fee ?? platform.qr_fee };
   cache.items = items.data || []; cache.generations = gens.data || []; cache.devices = devs.data || [];
-  cache.topups = tops.data || []; cache.walletTx = wtx.data || []; cache.recs = recs.data || [];
+  cache.topups = tops.data || []; cache.walletTx = wtx.data || []; cache.recs = recs.data || []; cache.printOrders = prints.data || [];
   const { data: d } = await sb.rpc('dq_device_status', { p_key: deviceKey() }); myDevice = d || null;
 }
 async function refreshRecs() { const { data } = await sb.rpc('dq_qr_recommendations'); cache.recs = data || []; }
@@ -285,6 +286,7 @@ async function boot() {
   try {
     const { data: { session: s } } = await sb.auth.getSession();
     session = s;
+    await loadRef();
     if (session) await loadMember(); else render();
   } catch (e) {
     document.getElementById('root').innerHTML = `<div class="lockScreen"><div class="bigIco">${icon('alert')}</div><h2>Can't reach DeepQr</h2><p class="muted">${esc(errMsg(e))}</p><button class="btn primary" onclick="location.reload()">Try again</button></div>`;
@@ -292,7 +294,7 @@ async function boot() {
 }
 async function loadMember() {
   const v = await sb.rpc('dq_version');
-  dbReady = !v.error && Number(v.data) >= 2;
+  dbReady = !v.error && Number(v.data) >= 3;
   const { data: adm } = await sb.rpc('dq_is_platform_admin'); isAdmin = adm === true;
   if (!dbReady) { me = null; view = 'needsUpdate'; render(); return; }
   const st = await rpc('dq_my_status');
@@ -338,6 +340,8 @@ async function registerSubmit(e) {
   try {
     const bizName = document.getElementById('rb').value.trim(), ownerName = document.getElementById('rn').value.trim();
     const ref = (document.getElementById('rref')?.value || '').trim();
+    const groups = checkedValues('rg');
+    if (!groups.length) { err.textContent = 'Choose at least one group that describes what you sell.'; return; }
     if (!session) {
       const email = document.getElementById('re').value.trim(), pass = document.getElementById('rp').value, pass2 = document.getElementById('rp2').value;
       if (pass !== pass2) { err.textContent = 'Passwords do not match.'; return; }
@@ -352,10 +356,13 @@ async function registerSubmit(e) {
     const { error: memErr } = await sb.from('members').insert({ business_id: biz.id, auth_user_id: session.user.id, name: ownerName, role: 'owner' });
     if (memErr) { err.textContent = memErr.message; return; }
     await sb.from('shops').insert([{ business_id: biz.id, name: 'Main Store', type: 'warehouse' }, { business_id: biz.id, name: 'Main Shop', type: 'shop' }]);
-    await sb.from('categories').insert(['General', 'Electronics', 'Food & Beverage', 'Household'].map(name => ({ business_id: biz.id, name })));
+    await sb.from('categories').insert([{ business_id: biz.id, name: 'General' }]);
     if (ref) { const r = await sb.rpc('dq_apply_referral', { p_code: ref }); if (r.error) toast('Referral code: ' + errMsg(r.error), 'bad'); }
+    const gr = await sb.rpc('dq_set_business_groups', { p_groups: groups });
+    if (gr.error) toast('Business type: ' + errMsg(gr.error), 'bad');
     toast('Welcome to DeepQr! Setting up your workspace…', 'ok');
     await loadMember();
+    if (me && me.role === 'owner') go('catalog', { welcome: 1 });
   } finally { busy = false; }
 }
 async function adminClaimSubmit(e) {
@@ -393,7 +400,7 @@ function render() {
   root.innerHTML = layout(); applySidebarState(); renderView();
 }
 function needsUpdateHtml() {
-  return `<div class="lockScreen" style="padding-top:12vh">${logoMark(54)}<h2>DeepQr needs a database update</h2><p class="muted">This version of DeepQr needs the v2 database update. The business owner or DeepQr admin should run <span class="mono">supabase/migrations/20261011120000_deepqr_v2.sql</span> in the Supabase SQL Editor, then reload this page.</p><div class="actions" style="justify-content:center"><button class="btn primary" onclick="location.reload()">Reload</button><button class="btn" onclick="logout()">Sign out</button></div></div>`;
+  return `<div class="lockScreen" style="padding-top:12vh">${logoMark(54)}<h2>DeepQr needs a database update</h2><p class="muted">This version of DeepQr needs the latest database update. The DeepQr admin should run <span class="mono">supabase/migrations/20261012120000_deepqr_v3.sql</span> (after the v2 file) in the Supabase SQL Editor, then reload this page.</p><div class="actions" style="justify-content:center"><button class="btn primary" onclick="location.reload()">Reload</button><button class="btn" onclick="logout()">Sign out</button></div></div>`;
 }
 function blockedHtml() {
   const st = window.__blocked || {};
@@ -421,6 +428,7 @@ function authHtml() {
     <div class="field"><label for="rb">Business name</label><input id="rb" required placeholder="e.g. Zanrizon Traders"></div>
     <div class="field"><label for="rn">Your full name</label><input id="rn" required></div>
     ${session ? '' : `<div class="field"><label for="re">Email</label><input id="re" type="email" required></div><div class="formGrid"><div class="field"><label for="rp">Password</label><input id="rp" type="password" required minlength="6"></div><div class="field"><label for="rp2">Confirm</label><input id="rp2" type="password" required minlength="6"></div></div>`}
+    <div class="field"><label>What does your business sell? <span class="muted">(choose one or more)</span></label>${groupCardsHtml([], 'rg')}</div>
     <div class="field"><label for="rref">Referral code <span class="muted">(optional)</span></label><input id="rref" class="mono" value="${esc(refFromUrl)}" placeholder="From another DeepQr business"></div>
     <div id="regErr" class="bad" style="min-height:20px"></div><button class="btn primary lg wide">Create my business</button>${session ? `<button type="button" class="btn ghost wide" onclick="logout()">Use a different account</button>` : ''}</form>`;
   else form = `<form id="adminForm" class="stack"><div><h2>Platform owner portal</h2><p class="muted">Sign in with the DeepQr owner account. First time? Enter your one-time activation code.</p></div>
@@ -447,11 +455,11 @@ function navGroups() {
     if (perms.can_view_reports) g.push(['Insights', [['reports', 'Reports', 'chart']]]);
   } else if (isStoreOp()) {
     g.push(['Overview', [['dashboard', 'Dashboard', 'dashboard']]]);
-    g.push(['Stock', [['products', 'Products', 'box'], ['qr', 'QR Codes', 'qr'], ['inventory', 'Inventory', 'layers'], ['expiry', 'Expiry', 'clock'], ['transfers', 'Transfers', 'transfer'], ['orders', 'Purchase orders', 'truck']]]);
+    g.push(['Stock', [['products', 'Products', 'box'], ['catalog', 'Product catalogue', 'spark'], ['qr', 'QR Codes', 'qr'], ['inventory', 'Inventory', 'layers'], ['expiry', 'Expiry', 'clock'], ['transfers', 'Transfers', 'transfer'], ['orders', 'Purchase orders', 'truck']]]);
     if (perms.can_view_reports) g.push(['Insights', [['reports', 'Reports', 'chart']]]);
   } else {
     g.push(['Sell', [['dashboard', 'Dashboard', 'dashboard'], ['pos', 'Scan & Sell', 'scan'], ['sales', 'Sales', 'receipt'], ['customers', 'Customers', 'users']]]);
-    g.push(['Stock', [['products', 'Products', 'box'], ['qr', 'QR Codes', 'qr'], ['inventory', 'Inventory', 'layers'], ['expiry', 'Expiry', 'clock'], ['transfers', 'Transfers', 'transfer'], ['orders', 'Purchase orders', 'truck']]]);
+    g.push(['Stock', [['products', 'Products', 'box'], ['catalog', 'Product catalogue', 'spark'], ['qr', 'QR Codes', 'qr'], ['inventory', 'Inventory', 'layers'], ['expiry', 'Expiry', 'clock'], ['transfers', 'Transfers', 'transfer'], ['orders', 'Purchase orders', 'truck']]]);
     g.push(['Business', [['reports', 'Reports', 'chart'], ['expenses', 'Expenses', 'minus'], ['stores', 'Stores & shops', 'store'], ['users', 'Staff', 'user'], ['devices', 'Devices & scanners', 'phone'], ['wallet', 'QR Wallet', 'wallet'], ['settings', 'Settings', 'settings']]]);
   }
   if (isAdmin) g.push(['Platform', [['portal', 'Owner portal', 'shield']]]);

@@ -10,7 +10,7 @@ supabase-js client is used, so RLS policies, triggers and RPCs are exercised.
     python3 tests/e2e_test.py <node_modules_dir> <screenshot_dir>
 
 <node_modules_dir> must contain @supabase/supabase-js@2.45.4, jsbarcode@3.11.6,
-html5-qrcode@2.3.8 and qrcode-generator@1.4.4. ffmpeg is used for the camera test.
+html5-qrcode@2.3.8, qrcode-generator@1.4.4 and exceljs@4.4.0. ffmpeg is used for the camera test.
 """
 import http.server, socketserver, threading, sys, os, functools, subprocess, time, re
 from playwright.sync_api import sync_playwright
@@ -42,6 +42,7 @@ LIBMAP = {
     'JsBarcode.all.min.js': os.path.join(LIBS, 'jsbarcode/dist/JsBarcode.all.min.js'),
     'html5-qrcode.min.js': os.path.join(LIBS, 'html5-qrcode/html5-qrcode.min.js'),
     'qrcode.js': os.path.join(LIBS, 'qrcode-generator/qrcode.js'),
+    'exceljs.min.js': os.path.join(LIBS, 'exceljs/dist/exceljs.min.js'),
 }
 def route(r):
     url = r.request.url
@@ -335,6 +336,116 @@ with sync_playwright() as p:
     check('new staff can sign in with username', st.is_visible('#scanInput'))
     shot(st, '24-mobile-pos')
     st.context.close()
+
+
+    # ================================================================== 8. v3: business type, catalogue, print orders, data export
+    import openpyxl, csv, io
+    reg = new_page(browser)
+    reg.goto(BASE); reg.wait_for_selector('#loginForm'); reg.click('[data-mode="register"]'); reg.wait_for_selector('#registerForm')
+    check('registration asks what the business sells (6 groups)', reg.locator('#registerForm .groupCard').count() == 6)
+    reg.fill('#rb', 'Afya Pharmacy & Mini Market'); reg.fill('#rn', 'Neema Mushi'); reg.fill('#re', 'neema@afya.test'); reg.fill('#rp', 'secret1'); reg.fill('#rp2', 'secret1')
+    reg.click('#registerForm button.primary'); reg.wait_for_timeout(800)
+    check('a group is required', 'Choose at least one group' in reg.inner_text('#regErr'), reg.inner_text('#regErr'))
+    reg.click('#registerForm .groupCard:has-text("Food & Beverage")'); reg.click('#registerForm .groupCard:has-text("Health & Pharmacy")')
+    shot(reg, '30-register-groups')
+    reg.click('#registerForm button.primary'); reg.wait_for_selector('.groupTabs', timeout=15000); reg.wait_for_timeout(600)
+    check('new business lands on the catalogue with a welcome', 'Welcome to DeepQr' in reg.inner_text('#content'))
+    check('business groups saved + categories created', sql("select array_to_string(business_groups, ',') from businesses where name like 'Afya%'") == 'A,B'
+          and sql("select count(*) from categories c join businesses b on b.id = c.business_id where b.name like 'Afya%' and c.name = 'OTC Drugs'") == '1')
+    shot(reg, '31-catalogue-welcome')
+    reg.click('.groupTabs button:has-text("Health & Pharmacy")'); reg.wait_for_timeout(300)
+    reg.click('.pill:has-text("OTC Drugs")'); reg.wait_for_timeout(300)
+    rows_ = reg.query_selector_all('.catChk')
+    for cb in rows_[:3]: cb.check()
+    reg.wait_for_timeout(200)
+    first_price = reg.query_selector_all('#content tbody tr')[0].query_selector_all('input[type=number]')[1]
+    first_price.fill('700'); reg.wait_for_timeout(200)
+    check('selection bar shows 3 selected', '3' in reg.inner_text('#catBar'))
+    shot(reg, '32-catalogue-select')
+    reg.click('#catBar button.primary'); reg.wait_for_timeout(1500)
+    check('3 catalogue products added to the new business', sql("select count(*) from products p join businesses b on b.id = p.business_id where b.name like 'Afya%' and p.catalog_id is not null") == '3')
+    check('chosen price kept, unit from master list', sql("select price::int||'/'||unit from products p join businesses b on b.id = p.business_id where b.name like 'Afya%' and p.code = 'OTC001'") == '700/STRIP')
+    check('catalogue marks them as in my products', reg.locator('text=In my products').count() >= 3)
+    reg.evaluate("openProduct('OTC001')"); reg.wait_for_selector('#pu')
+    check('product editor uses the unit master', reg.eval_on_selector('#pu', 'e => e.value') == 'STRIP' and reg.locator('#pu option').count() >= 16)
+    reg.keyboard.press('Escape')
+    reg.evaluate("submitCatalogProduct()"); reg.wait_for_selector('#scF')
+    reg.fill('#scN', 'Ukwaju juice 300ml'); reg.fill('#scB', 'Mama Neema'); reg.select_option('#scS', 'A6'); reg.select_option('#scU', 'BOTTLE'); reg.fill('#scPr', '1500')
+    reg.click('#scF button.primary'); reg.wait_for_timeout(1000)
+    check('business suggests a product for the catalogue', sql("select status from catalog_products where name = 'Ukwaju juice 300ml'") == 'pending')
+    reg.context.close()
+
+    # owner (DEMO): sets business type in settings, print order, data export
+    pg = new_page(browser)
+    login(pg, 'owner@demo.test')
+    check('dashboard asks to choose the business type', 'Choose your business type' in pg.inner_text('#content'))
+    goto(pg, 'settings'); pg.click('button:has-text("Change")'); pg.wait_for_selector('#btF')
+    pg.click('#btF .groupCard:has-text("Electronics")'); pg.click('#btF .groupCard:has-text("Food & Beverage")')
+    pg.check('#btF input[name=btU][value=PCS]'); pg.check('#btF input[name=btU][value=CARTON]')
+    shot(pg, '33-business-type')
+    pg.click('#btF button.primary'); pg.wait_for_timeout(1000)
+    check('business type saved from settings', sql("select array_to_string(business_groups, ',') from businesses where code = 'DEM'") == 'A,E'
+          and sql("select array_to_string(units, ',') from businesses where code = 'DEM'") in ('PCS,CARTON', 'CARTON,PCS'))
+    goto(pg, 'qr', 'batches'); pg.wait_for_selector('.genChk')
+    pg.query_selector_all('.genChk')[0].check()
+    pg.click('#orderPrintBtn'); pg.wait_for_selector('#poPrF')
+    pg.select_option('#prC', '2'); pg.select_option('#prM', 'delivery'); pg.fill('#prA', 'Kariakoo, Dar es Salaam'); pg.fill('#prPh', '0712 000 111')
+    shot(pg, '34-print-order')
+    pg.click('#poPrF button.primary'); pg.wait_for_timeout(1500)
+    po = sql("select order_no||'/'||label_count||'/'||copies||'/'||status from qr_print_orders order by created_at desc limit 1")
+    check('print order sent to DeepQr', po.startswith('PR-') and po.endswith('/2/requested'), po)
+    check('print order tab shows progress', 'Requested' in pg.inner_text('#content'))
+    shot(pg, '35-print-orders')
+
+    goto(pg, 'reports'); pg.wait_for_selector('.svgChart', timeout=10000)
+    pg.click('button:has-text("Download data")'); pg.wait_for_selector('#exF')
+    pg.select_option('#exR', 'last30')
+    shot(pg, '36-export-dialog')
+    with pg.expect_download(timeout=30000) as dl:
+        pg.click('#exF button.primary')
+    path = os.path.join(SHOTS, '_export.xlsx'); dl.value.save_as(path)
+    wb = openpyxl.load_workbook(path)
+    check('Excel file has Data, Summary, Monthly and guide sheets', wb.sheetnames == ['Data', 'Summary', 'Monthly', 'How to analyse'], wb.sheetnames)
+    ws = wb['Data']
+    hdr = [c.value for c in ws[1]]
+    check('Data sheet is one Excel table with filter headers', 'DeepQrData' in ws.tables and hdr[:8] == ['Date', 'Time', 'Year', 'Month', 'Month name', 'Week', 'Weekday', 'Type'], (list(ws.tables.keys()), hdr[:8]))
+    types_ = {r[7] for r in ws.iter_rows(min_row=2, values_only=True)}
+    check('one sheet holds sales, payments, purchases, expenses and stock', {'Sale', 'Payment received', 'Stock received', 'Stock on hand'} <= types_, types_)
+    sale = next(r for r in ws.iter_rows(min_row=2, values_only=True) if r[7] == 'Sale')
+    check('dates are real dates and amounts are numbers (pivot-ready)', hasattr(sale[0], 'year') and isinstance(sale[18], (int, float)) and isinstance(sale[20], (int, float)), sale[:21])
+    check('header row frozen', ws.freeze_panes == 'A2', ws.freeze_panes)
+    pg.wait_for_timeout(500)
+    pg.click('#exF .seg button:has-text("CSV")')
+    for cb in pg.query_selector_all('input[name=exT]'): cb.uncheck()
+    pg.check('input[name=exT][value=expense]'); pg.check('input[name=exT][value=purchase]')
+    with pg.expect_download(timeout=30000) as dl2:
+        pg.click('#exF button.primary')
+    cpath = os.path.join(SHOTS, '_export.csv'); dl2.value.save_as(cpath)
+    crow = list(csv.reader(io.open(cpath, encoding='utf-8-sig')))
+    check('CSV export filtered by data type', crow[0][0] == 'Date' and {r[7] for r in crow[1:]} <= {'Stock received', 'Expense'} and len(crow) > 1, {r[7] for r in crow[1:]})
+    pg.context.close()
+
+    # platform owner: approve suggestion, run the print queue
+    ad = new_page(browser)
+    login(ad, 'mohdabdull129@gmail.com')
+    ad.evaluate("pTab('catalog')"); ad.wait_for_selector('#pCatQ', timeout=10000)
+    shot(ad, '37-portal-catalogue')
+    ad.evaluate("pCatF.status='pending';renderView()"); ad.wait_for_timeout(300)
+    ad.click('tr:has-text("Ukwaju") button:has-text("Review")'); ad.wait_for_selector('#pcF')
+    ad.click('#pcF button[data-act=approve]'); ad.wait_for_timeout(1200)
+    check('admin approved the suggestion with the next code', sql("select status||'/'||code from catalog_products where name = 'Ukwaju juice 300ml'") == 'approved/BEV013')
+    ad.evaluate("pTab('prints')"); ad.wait_for_timeout(500)
+    check('print queue shows the client order', 'DEMO' in ad.inner_text('#content') and 'PR-' in ad.inner_text('#content'))
+    shot(ad, '38-portal-prints')
+    ad.click('tr:has-text("DEMO") button:has-text("Labels")'); ad.wait_for_selector('.labelSheet .qrLabel', timeout=10000)
+    nlab = ad.locator('.labelSheet .qrLabel').count()
+    check('admin label sheet: every label x copies, with the business name', nlab == int(po.split('/')[1]) * 2 and 'DEMO' in ad.inner_text('.labelSheet'), nlab)
+    shot(ad, '39-portal-label-sheet')
+    ad.keyboard.press('Escape'); ad.wait_for_timeout(300)
+    ad.click('tr:has-text("DEMO") button:has-text("Status")'); ad.wait_for_selector('#ppF')
+    ad.select_option('#ppS', 'ready'); ad.fill('#ppN', 'Ready at the Kariakoo office'); ad.click('#ppF button.primary'); ad.wait_for_timeout(1200)
+    check('admin marks the order ready for the client', sql("select status from qr_print_orders order by created_at desc limit 1") == 'ready')
+    ad.context.close()
 
     # ================================================================== 7. phone camera scanning (fake camera showing a label)
     qr_png = os.path.join(SHOTS, '_qr.png'); y4m = os.path.join(SHOTS, '_qr.y4m')
