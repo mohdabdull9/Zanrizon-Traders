@@ -39,7 +39,7 @@ const PALETTE = ['#2F5BEA', '#14B8A6', '#F59E0B', '#EF4444', '#8B5CF6', '#10B981
 /* ---------------- page ---------------- */
 PAGES.reports = {
   title: 'Reports', sub: () => repData ? `${fmtD(repData.from)} – ${fmtD(repData.to)}${repF.shop ? ' · ' + esc(shopObj(repF.shop)?.name || '') : me.role === 'cashier' ? ' · ' + esc(shopObj(me.shop_id)?.name || '') : ' · all locations'}` : 'Sales, profit, stock and money in one place',
-  actions: () => `<button class="btn" onclick="exportReport()">${icon('download')}Export CSV</button><button class="btn" onclick="window.print()">${icon('printer')}Print</button>`,
+  actions: () => `<button class="btn primary" onclick="openExport()">${icon('download')}Download data (Excel)</button><button class="btn" onclick="exportReport()">${icon('download')}This report (CSV)</button><button class="btn" onclick="window.print()">${icon('printer')}Print</button>`,
   render: () => {
     const tab = viewParams.tab || 'overview';
     const [from, to] = repDates();

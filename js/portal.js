@@ -5,7 +5,7 @@
    ============================================================================= */
 let admF = { q: '', status: '', sort: 'recent' };
 async function loadAdmin() {
-  try { adminData = await rpc('dq_admin_overview'); }
+  try { adminData = await rpc('dq_admin_overview'); const pr = await sb.rpc('dq_admin_print_orders'); adminData.prints = pr.data || []; }
   catch (e) { adminData = null; toast('Portal: ' + errMsg(e), 'bad'); }
 }
 async function reloadAdmin(msg) { await loadAdmin(); if (view === 'portal') renderView(); if (msg) toast(msg, 'ok'); }
@@ -18,8 +18,8 @@ PAGES.portal = {
   render: () => {
     if (!adminData) { loadAdmin().then(() => { if (adminData) renderView(); }); return `<div class="card"><div class="empty"><span class="spinner"></span> Loading the portal…</div></div>`; }
     const tab = viewParams.tab || 'overview', pend = adminData.topups.filter(t => t.status === 'pending');
-    const tabs = [['overview', 'Overview', 'dashboard'], ['businesses', 'Businesses', 'store', adminData.businesses.length], ['topups', 'Top-ups', 'wallet', pend.length || '', true], ['credits', 'Credits & bonuses', 'gift'], ['qr', 'QR activity', 'qr'], ['announce', 'Announcements', 'megaphone'], ['ledger', 'Ledger', 'history'], ['audit', 'Audit log', 'shield'], ['settings', 'Settings', 'settings']];
-    const v = { overview: pOverview, businesses: pBusinesses, topups: pTopups, credits: pCredits, qr: pQr, announce: pAnnounce, ledger: pLedger, audit: pAudit, settings: pSettings }[tab] || pOverview;
+    const tabs = [['overview', 'Overview', 'dashboard'], ['businesses', 'Businesses', 'store', adminData.businesses.length], ['topups', 'Top-ups', 'wallet', pend.length || '', true], ['credits', 'Credits & bonuses', 'gift'], ['catalog', 'Catalogue', 'spark', (catData || []).filter(c => c.status === 'pending').length || '', true], ['prints', 'Print orders', 'printer', (adminData.prints || []).filter(o => ['requested', 'accepted', 'printing'].includes(o.status)).length || '', true], ['qr', 'QR activity', 'qr'], ['announce', 'Announcements', 'megaphone'], ['ledger', 'Ledger', 'history'], ['audit', 'Audit log', 'shield'], ['settings', 'Settings', 'settings']];
+    const v = { overview: pOverview, businesses: pBusinesses, topups: pTopups, credits: pCredits, catalog: pCatalog, prints: pPrints, qr: pQr, announce: pAnnounce, ledger: pLedger, audit: pAudit, settings: pSettings }[tab] || pOverview;
     return tabbar('portalTabs', tabs, tab, 'pTab') + v();
   }
 };
@@ -200,6 +200,9 @@ function pSettings() {
     <div class="field"><label for="psFee">Price per QR label</label><input id="psFee" type="number" min="0" step="any" value="${s.qr_fee}"></div><div class="field"><label for="psCur">Currency</label><input id="psCur" value="${esc(s.currency)}" maxlength="5"></div><div class="field"><label for="psMin">Minimum top-up</label><input id="psMin" type="number" min="0" step="any" value="${s.min_topup}"></div><div class="field"><label for="psLow">Warn businesses below</label><input id="psLow" type="number" min="0" step="any" value="${Number(s.low_balance_threshold || 500)}"></div></div>
     <label class="chk" style="margin-top:10px"><input type="checkbox" id="psNeg" ${s.allow_negative_balance ? 'checked' : ''}>Allow every business to go below zero (otherwise set a credit limit per business)</label>
     <p class="muted" style="font-size:12.5px">Last changed ${s.updated_at ? fmtDT(s.updated_at) : '—'} ${s.updated_by ? 'by ' + esc(s.updated_by) : ''}</p></div>
+   <div class="card" style="margin:0"><div class="cardHead"><div><h3>Label printing service</h3><p>Businesses can order printed QR labels from you.</p></div></div><div class="formGrid">
+    <div class="field"><label for="psPf">Price per printed label</label><input id="psPf" type="number" min="0" step="any" value="${Number(s.print_fee_per_label ?? 20)}"></div><div class="field"><label for="psDf">Delivery fee</label><input id="psDf" type="number" min="0" step="any" value="${Number(s.print_delivery_fee ?? 0)}"></div><div class="field"><label for="psLd">Minimum days to print</label><input id="psLd" type="number" min="0" value="${Number(s.print_lead_days ?? 2)}"></div></div>
+    <div class="field" style="margin-top:10px"><label for="psPn">Note shown to businesses</label><input id="psPn" value="${esc(s.print_note || '')}"></div></div>
    <div class="card" style="margin:0"><div class="cardHead"><div><h3>Support contacts</h3></div></div><div class="formGrid"><div class="field"><label for="psSp">Support phone / WhatsApp</label><input id="psSp" value="${esc(s.support_phone || '')}"></div><div class="field"><label for="psSe">Support email</label><input id="psSe" type="email" value="${esc(s.support_email || '')}"></div></div>
     <div class="field" style="margin-top:10px"><label for="psIns">Payment instructions</label><textarea id="psIns" rows="3">${esc(s.payment_instructions || '')}</textarea></div></div></div>
    <div class="card" style="margin-top:16px"><div class="cardHead"><div><h3>Where businesses pay you</h3><p>Shown with a copy button on every wallet page.</p></div><button type="button" class="btn" onclick="pAccts.push({method:'M-Pesa',number:'',name:'',note:''});renderView()">${icon('plus')}Add account</button></div>
@@ -211,7 +214,7 @@ document.addEventListener('submit', async e => {
   if (id === 'pSet') {
     e.preventDefault(); const v = x => document.getElementById(x).value;
     const accts = (pAccts || []).filter(a => (a.number || '').trim()).map(a => ({ method: a.method.trim(), number: a.number.trim(), name: (a.name || '').trim(), note: (a.note || '').trim() }));
-    await withBusy(e.submitter, async () => { const r = await rpcToast('dq_admin_save_settings', { p: { qr_fee: Number(v('psFee')), currency: v('psCur').toUpperCase(), min_topup: Number(v('psMin')), low_balance_threshold: Number(v('psLow')), allow_negative_balance: document.getElementById('psNeg').checked, support_phone: v('psSp'), support_email: v('psSe'), payment_instructions: v('psIns'), payment_accounts: accts } }, 'Platform settings saved'); if (r) { pAccts = null; reloadAdmin(); } });
+    await withBusy(e.submitter, async () => { const r = await rpcToast('dq_admin_save_settings', { p: { qr_fee: Number(v('psFee')), currency: v('psCur').toUpperCase(), min_topup: Number(v('psMin')), low_balance_threshold: Number(v('psLow')), allow_negative_balance: document.getElementById('psNeg').checked, support_phone: v('psSp'), support_email: v('psSe'), payment_instructions: v('psIns'), payment_accounts: accts, print_fee_per_label: Number(v('psPf')), print_delivery_fee: Number(v('psDf')), print_lead_days: Number(v('psLd')), print_note: v('psPn') } }, 'Platform settings saved'); if (r) { pAccts = null; reloadAdmin(); } });
   } else if (id === 'pProg') {
     e.preventDefault(); const v = x => document.getElementById(x).value;
     await withBusy(e.submitter, async () => { const r = await rpcToast('dq_admin_save_settings', { p: { welcome_credit: Number(v('ppW')), free_qr_monthly: Number(v('ppF')), referral_bonus: Number(v('ppR')), referee_bonus: Number(v('ppE')), bonus_expiry_days: Number(v('ppX')) } }, 'Reward programme saved'); if (r) reloadAdmin(); });
@@ -221,3 +224,94 @@ document.addEventListener('submit', async e => {
     confirmBox('Send bonus to everyone?', `${pm(amt)} bonus to <b>${n}</b> business(es) — ${pm(amt * n)} in total.`, 'Send bonus', async b => { await withBusy(b, async () => { const r = await rpcToast('dq_admin_bulk_bonus', { p_amount: amt, p_note: note, p_only_active: only }); if (r !== undefined) { closeModal(); reloadAdmin(`Bonus sent to ${r} business(es)`); } }); }, 'success');
   }
 });
+
+
+/* ---------------- catalogue curation ---------------- */
+let pCatF = { group: '', status: '', q: '' };
+function pCatalog() {
+  if (!catData) { loadCatalog(true).then(() => view === 'portal' && renderView()); return `<div class="card"><div class="empty"><span class="spinner"></span> Loading catalogue…</div></div>`; }
+  let list = catData.slice();
+  if (pCatF.group) list = list.filter(c => c.group_code === pCatF.group);
+  if (pCatF.status) list = list.filter(c => pCatF.status === 'inactive' ? !c.active : c.status === pCatF.status);
+  if (pCatF.q) { const q = pCatF.q.toLowerCase(); list = list.filter(c => [c.name, c.brand, c.code].join(' ').toLowerCase().includes(q)); }
+  const pend = catData.filter(c => c.status === 'pending');
+  const biz = id => adminData.businesses.find(b => b.id === id)?.name || '';
+  return `<div class="grid g3" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">${REF.groups.map(g => kpi(g.icon || 'box', esc(g.name), num(catData.filter(c => c.group_code === g.code && c.status === 'approved').length), `${num(sum(catData.filter(c => c.group_code === g.code), 'adopted_count'))} adoptions`)).join('')}</div>
+   ${pend.length ? `<div class="banner warn" style="margin-top:16px">${icon('spark')}<div><b>${pend.length} product suggestion(s) from businesses</b><p>Check the name, subcategory and unit, then approve to share them with everyone.</p></div><button class="btn small" onclick="pCatF.status='pending';renderView()">Review</button></div>` : ''}
+   <div class="card" style="margin-top:16px"><div class="toolbar"><input class="input grow" id="pCatQ" value="${esc(pCatF.q)}" oninput="pCatF.q=this.value;const p=this.selectionStart;renderView();const e=document.getElementById('pCatQ');e.focus();e.setSelectionRange(p,p)" placeholder="Search name, brand or code…">
+    <select class="input" onchange="pCatF.group=this.value;renderView()"><option value="">All groups</option>${REF.groups.map(g => `<option value="${g.code}" ${pCatF.group === g.code ? 'selected' : ''}>${g.code}. ${esc(g.name)}</option>`).join('')}</select>
+    <select class="input" onchange="pCatF.status=this.value;renderView()">${[['', 'All'], ['approved', 'Approved'], ['pending', 'Waiting approval'], ['rejected', 'Rejected'], ['inactive', 'Hidden']].map(([k, l]) => `<option value="${k}" ${pCatF.status === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <button class="btn" onclick="pCatImport()">${icon('upload')}Import CSV</button><button class="btn primary" onclick="pCatEdit()">${icon('plus')}Add product</button></div>
+   <div class="tableWrap"><table><thead><tr><th>Code</th><th>Product</th><th>Subcategory</th><th>Unit</th><th class="right">Suggested price</th><th class="right">Used by</th><th>Source</th><th>Status</th><th></th></tr></thead><tbody>
+   ${list.slice(0, 500).map(c => `<tr><td class="mono">${esc(c.code || '—')}</td><td>${groupDot(c.group_code)}<b>${esc(c.name)}</b>${c.brand ? `<span class="sub">${esc(c.brand)}${c.pack_size ? ' · ' + esc(c.pack_size) : ''}</span>` : c.pack_size ? `<span class="sub">${esc(c.pack_size)}</span>` : ''}</td><td>${esc(subObj(c.subcategory_code)?.name || '')}</td><td><span class="tag gray">${esc(c.unit_code)}</span></td><td class="right num">${pm(c.suggested_price)}</td><td class="right num">${c.adopted_count}</td><td>${c.source === 'business' ? `${esc(biz(c.submitted_by_business))}<span class="sub">${esc(c.submitted_by || '')}</span>` : 'DeepQr'}</td><td>${c.status === 'pending' ? '<span class="tag warn">Waiting</span>' : c.status === 'rejected' ? '<span class="tag bad">Rejected</span>' : c.active ? '<span class="tag ok">Live</span>' : '<span class="tag gray">Hidden</span>'}</td>
+    <td><div class="actions" style="flex-wrap:nowrap">${c.status === 'pending' ? `<button class="btn small success" onclick="pCatEdit('${c.id}',true)">${icon('check')}Review</button>` : `<button class="btn small" onclick="pCatEdit('${c.id}')">${icon('edit')}</button>`}</div></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Nothing matches.</td></tr>'}
+   </tbody></table></div>${list.length > 500 ? `<p class="muted">Showing 500 of ${list.length}.</p>` : ''}</div>`;
+}
+function pCatEdit(id, review) {
+  const c = id ? catData.find(x => x.id === id) : { unit_code: 'PCS', active: true, subcategory_code: pCatF.group ? REF.subs.find(s => s.group_code === pCatF.group)?.code : 'A1' };
+  modal(`<form id="pcF"><div class="cardHead"><div><h3>${review ? 'Review suggested product' : id ? 'Edit catalogue product ' + esc(c.code || '') : 'Add a catalogue product'}</h3><p>${review ? `Suggested by ${esc(adminData.businesses.find(b => b.id === c.submitted_by_business)?.name || 'a business')}. Fix anything, then approve — it gets the next code in its subcategory.` : 'Visible to every business in this group. Changing the subcategory gives the product a new code.'}</p></div><button type="button" class="btn ghost" onclick="closeModal()">${icon('x')}</button></div>
+   <div class="formGrid"><div class="field"><label>Name *</label><input id="pcN" required value="${esc(c.name || '')}"></div><div class="field"><label>Brand</label><input id="pcB" value="${esc(c.brand || '')}"></div>
+    <div class="field"><label>Subcategory *</label><select id="pcS">${REF.groups.map(g => `<optgroup label="${esc(g.code + '. ' + g.name)}">${REF.subs.filter(s => s.group_code === g.code).map(s => `<option value="${s.code}" ${c.subcategory_code === s.code ? 'selected' : ''}>${esc(s.name)} (${s.prefix})</option>`).join('')}</optgroup>`).join('')}</select></div>
+    <div class="field"><label>Unit *</label><select id="pcU">${REF.units.map(u => `<option value="${esc(u.code)}" ${c.unit_code === u.code ? 'selected' : ''}>${esc(u.code)} — ${esc(u.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Pack size</label><input id="pcP" value="${esc(c.pack_size || '')}"></div><div class="field"><label>Suggested price (${esc(pcur())})</label><input id="pcPr" type="number" min="0" step="any" value="${Number(c.suggested_price || 0)}"></div>
+    <div class="field"><label>Barcode (EAN)</label><input id="pcBc" class="mono" value="${esc(c.barcode || '')}"></div></div>
+   <div class="field" style="margin-top:10px"><label>Description</label><input id="pcD" value="${esc(c.description || '')}"></div>
+   ${id && !review ? `<label class="chk" style="margin-top:10px"><input type="checkbox" id="pcA" ${c.active ? 'checked' : ''}>Live (visible to businesses)</label>` : ''}
+   <div id="pcErr" class="bad" style="min-height:20px;margin-top:8px"></div>
+   <div class="actions">${review ? `<button class="btn success" data-act="approve">${icon('check')}Approve &amp; publish</button><button type="button" class="btn danger" onclick="pCatReject('${id}')">${icon('x')}Reject</button>` : `<button class="btn primary" data-act="save">${icon('check')}Save</button>${id ? `<button type="button" class="btn danger" onclick="pCatDelete('${id}')">${icon('trash')}Delete</button>` : ''}`}</div></form>`);
+  document.getElementById('pcF').onsubmit = async e => {
+    e.preventDefault(); const v = x => document.getElementById(x).value;
+    await withBusy(e.submitter, async () => {
+      try { await rpc('dq_admin_save_catalog', { p: { id: id || null, action: e.submitter?.dataset.act || 'save', name: v('pcN'), brand: v('pcB'), subcategory_code: v('pcS'), unit_code: v('pcU'), pack_size: v('pcP'), price: v('pcPr'), barcode: v('pcBc'), description: v('pcD'), active: document.getElementById('pcA') ? document.getElementById('pcA').checked : true } }); closeModal(); await loadCatalog(true); renderView(); toast(review ? 'Approved and published' : 'Catalogue saved', 'ok'); }
+      catch (x) { document.getElementById('pcErr').textContent = errMsg(x); }
+    });
+  };
+}
+function pCatReject(id) { askBox('Reject this suggestion?', 'The business will see your reason.', { label: 'Reason', required: true, value: 'Already in the catalogue under another name' }, 'Reject', async (v, b) => { await withBusy(b, async () => { const r = await rpcToast('dq_admin_save_catalog', { p: { id, action: 'reject', note: v } }, 'Suggestion rejected'); if (r) { closeModal(); await loadCatalog(true); renderView(); } }); }); }
+function pCatDelete(id) { confirmBox('Delete this catalogue product?', 'Businesses that already added it keep their own copy.', 'Delete', async b => { await withBusy(b, async () => { await rpcToast('dq_admin_save_catalog', { p: { id, action: 'delete' } }, 'Deleted'); closeModal(); await loadCatalog(true); renderView(); }); }, 'danger'); }
+function pCatImport() {
+  modal(`<div class="cardHead"><div><h3>Import catalogue products (CSV)</h3><p>First row = headers: <span class="mono">name, brand, subcategory, unit, pack_size, price, barcode</span>. Subcategory can be the name (e.g. <i>Beverages</i>) or code (<i>A6</i>). Duplicates are skipped; codes are given automatically.</p></div><button class="btn ghost" onclick="closeModal()">${icon('x')}</button></div>
+   <input type="file" id="pciF" accept=".csv,text/csv" class="input"><div id="pciOut" style="margin-top:12px"></div>`);
+  document.getElementById('pciF').onchange = async e => {
+    const text = await e.target.files[0].text();
+    const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
+    const split = l => { const out = []; let cur = '', q = false; for (const ch of l) { if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur.trim()); cur = ''; } else cur += ch; } out.push(cur.trim()); return out; };
+    const head = split(lines[0]).map(h => h.toLowerCase()); const ix = k => head.indexOf(k);
+    const items = lines.slice(1).map(split).map(r => { const sub = r[ix('subcategory')] || ''; return { name: r[ix('name')], brand: r[ix('brand')] || '', subcategory_code: /^[A-F]\d$/i.test(sub) ? sub.toUpperCase() : '', subcategory: sub, unit_code: (r[ix('unit')] || 'PCS').toUpperCase(), pack_size: r[ix('pack_size')] || '', price: r[ix('price')] || 0, barcode: r[ix('barcode')] || '' }; }).filter(x => x.name);
+    document.getElementById('pciOut').innerHTML = `<p><b>${items.length}</b> row(s) read.</p><button class="btn primary" id="pciGo">${icon('upload')}Import ${items.length}</button>`;
+    document.getElementById('pciGo').onclick = async ev => { await withBusy(ev.currentTarget, async () => { const r = await rpcToast('dq_admin_save_catalog', { p: { action: 'import', items } }); if (r) { closeModal(); await loadCatalog(true); renderView(); toast(`${r.added} product(s) added to the catalogue`, 'ok'); } }); };
+  };
+}
+
+/* ---------------- print orders (label printing service) ---------------- */
+let pPrF = 'open';
+function pPrints() {
+  let list = adminData.prints || [];
+  if (pPrF === 'open') list = list.filter(o => ['requested', 'accepted', 'printing', 'ready'].includes(o.status));
+  else if (pPrF !== 'all') list = list.filter(o => o.status === pPrF);
+  const due = (adminData.prints || []).filter(o => ['requested', 'accepted', 'printing'].includes(o.status));
+  const today = dateOnly();
+  return `<div class="grid g4">${kpi('printer', 'Waiting to print', due.length, `${num(sum(due, o => o.label_count * o.copies))} labels`, due.length ? 'warn' : '')}${kpi('clock', 'Due in 2 days', due.filter(o => (o.promised_date || o.requested_date) <= addDays(2)).length, 'by requested / promised date', due.some(o => (o.promised_date || o.requested_date) < today) ? 'bad' : '')}${kpi('check', 'Ready for collection', (adminData.prints || []).filter(o => o.status === 'ready').length)}${kpi('coins', 'Printing income', pm(sum((adminData.prints || []).filter(o => !['cancelled', 'rejected'].includes(o.status)), 'total_fee')))}</div>
+  <div class="card" style="margin-top:16px"><div class="pillRow">${[['open', 'Open'], ['requested', 'New'], ['accepted', 'Accepted'], ['printing', 'Printing'], ['ready', 'Ready'], ['delivered', 'Delivered'], ['cancelled', 'Cancelled'], ['all', 'All']].map(([k, l]) => `<button class="pill ${pPrF === k ? 'active' : ''}" onclick="pPrF='${k}';renderView()">${l}</button>`).join('')}</div>
+  <div class="tableWrap"><table><thead><tr><th>Order</th><th>Client</th><th>Products</th><th class="right">Labels</th><th>Needed by</th><th>Collection</th><th class="right">Fee</th><th>Status</th><th></th></tr></thead><tbody>
+  ${list.map(o => { const late = !['ready', 'delivered', 'cancelled', 'rejected'].includes(o.status) && (o.promised_date || o.requested_date) < today; return `<tr><td class="mono"><b>${esc(o.order_no)}</b><span class="sub">${fmtDT(o.created_at)}</span></td><td><button class="priceBtn" onclick="pBusiness('${o.business_id}')"><b>${esc(o.business_name)}</b></button><span class="sub">${esc(o.business_code)} · ${esc(o.contact_name || '')} ${esc(o.contact_phone || '')}</span></td><td>${esc(o.products || '')}</td><td class="right num">${num(o.label_count)}${o.copies > 1 ? ` × ${o.copies}` : ''}<span class="sub">${esc(o.label_size)}</span></td><td>${fmtD(o.requested_date)}${o.promised_date ? `<span class="sub">promised ${fmtD(o.promised_date)}</span>` : ''}${late ? ' <span class="tag bad">late</span>' : ''}</td><td>${o.delivery_method === 'delivery' ? `Delivery<span class="sub">${esc(o.delivery_address || '')}</span>` : 'Collect'}</td><td class="right num">${pm(o.total_fee)}</td><td>${printTag(o.status)}${o.note ? `<span class="sub">“${esc(o.note)}”</span>` : ''}</td>
+   <td><div class="actions" style="flex-wrap:nowrap"><button class="btn small primary" onclick="pPrintLabels('${o.id}')">${icon('printer')}Labels</button><button class="btn small" onclick="pPrintStatus('${o.id}')">${icon('edit')}Status</button></div></td></tr>`; }).join('') || '<tr><td colspan="9" class="empty">No print orders here.</td></tr>'}
+  </tbody></table></div></div>`;
+}
+function pPrintStatus(id) {
+  const o = adminData.prints.find(x => x.id === id);
+  const next = { requested: 'accepted', accepted: 'printing', printing: 'ready', ready: 'delivered' }[o.status];
+  modal(`<form id="ppF"><div class="cardHead"><div><h3>${esc(o.order_no)} — ${esc(o.business_name)}</h3><p>${num(o.label_count)} label(s)${o.copies > 1 ? ` × ${o.copies}` : ''}, needed by ${fmtD(o.requested_date)}. ${o.delivery_method === 'delivery' ? 'Deliver to ' + esc(o.delivery_address || '') : 'Client collects'}.</p></div><button type="button" class="btn ghost" onclick="closeModal()">${icon('x')}</button></div>
+   <ul class="timeline">${(o.history || []).map(h => `<li class="${h.status === 'rejected' || h.status === 'cancelled' ? 'bad' : 'ok'}">${esc(PRINT_STATUS[h.status]?.[0] || h.status)} · ${esc(h.by || '')}${h.note ? ' — ' + esc(h.note) : ''}<small>${fmtDT(h.at)}</small></li>`).join('')}</ul>
+   <div class="formGrid"><div class="field"><label>New status</label><select id="ppS">${['accepted', 'printing', 'ready', 'delivered', 'rejected'].map(s => `<option value="${s}" ${s === next ? 'selected' : ''}>${PRINT_STATUS[s][0]}</option>`).join('')}</select></div><div class="field"><label>Date you will have it ready</label><input id="ppD" type="date" value="${esc(o.promised_date || o.requested_date)}"></div></div>
+   <div class="field" style="margin-top:10px"><label>Message to the client (required when rejecting)</label><input id="ppN" value="${esc(o.admin_note || '')}"></div>
+   <div class="actions" style="margin-top:12px"><button class="btn primary">${icon('check')}Update order</button></div></form>`, 'narrow');
+  document.getElementById('ppF').onsubmit = async e => { e.preventDefault(); const v = x => document.getElementById(x).value; await withBusy(e.submitter, async () => { const r = await rpcToast('dq_admin_print_update', { p: { id, status: v('ppS'), promised_date: v('ppD'), note: v('ppN') } }, 'Print order updated'); if (r) { closeModal(); reloadAdmin(); } }); };
+}
+async function pPrintLabels(id) {
+  const d = await rpcToast('dq_admin_print_labels', { p_id: id }); if (!d) return;
+  const o = d.order, cols = { small: 6, medium: 4, large: 3 }[o.label_size] || 4;
+  const labels = d.labels.flatMap(l => Array.from({ length: o.copies || 1 }, () => l));
+  modal(`<div class="cardHead noPrint"><div><h3>${esc(o.order_no)} · ${esc(d.business.name)} (${esc(d.business.code)})</h3><p>${labels.length} label(s), ${esc(o.label_size)} size. Each QR carries the business code <b class="mono">${esc(d.business.code)}</b>, so it only scans in their account.</p></div><div class="actions"><button class="btn primary" onclick="printModal()">${icon('printer')}Print</button>${o.status === 'accepted' || o.status === 'requested' ? `<button class="btn" onclick="closeModal();rpcToast('dq_admin_print_update',{p:{id:'${id}',status:'printing'}},'Marked as printing').then(()=>reloadAdmin())">Mark printing</button>` : ''}<button class="btn ghost" onclick="closeModal()">${icon('x')}</button></div></div>
+   <div class="labelSheet cols${cols}">${labels.map(l => `<div class="qrLabel"><div class="lbBiz">${esc(d.business.name)}</div><div class="lbName">${esc(l.product)}</div>${qrSvg(l.payload, 3)}<div class="lbSerial">${esc(l.serial)}</div><div class="lbMeta">${esc(l.code)} · ${esc(l.shop_code || '')} · ${money(l.price, pcur())}${l.expiry ? ' · EXP ' + esc(l.expiry) : ''}</div></div>`).join('')}</div>`, 'wide');
+}
