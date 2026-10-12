@@ -402,3 +402,43 @@ a.btn{text-decoration:none;color:inherit}
 .drawer .kpi .s{white-space:normal}
 td.mono,td .mono,td b.mono{white-space:nowrap}
 .camResult.ok,.camResult.bad{color:#fff!important}
+/* ---- v3: business groups, catalogue, print orders ---- */
+.groupGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.authBox .groupGrid{grid-template-columns:1fr 1fr;gap:8px}
+.groupCard{position:relative;display:flex;gap:10px;align-items:flex-start;padding:12px;border:1.5px solid var(--line-2);border-radius:12px;background:var(--card);cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .12s}
+.groupCard:hover{border-color:var(--gc);transform:translateY(-1px)}
+.groupCard input{position:absolute;opacity:0;pointer-events:none}
+.groupCard .gIco{flex:none;width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--gc) 13%,transparent);color:var(--gc)}
+.groupCard b{display:block;font-size:13.5px;line-height:1.25}
+.groupCard small{display:block;color:var(--muted);font-size:11.5px;line-height:1.35;margin-top:2px}
+.authBox .groupCard small{display:none}
+.groupCard .gTick{position:absolute;top:8px;right:8px;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--gc);color:#fff;opacity:0;transform:scale(.6);transition:all .15s}
+.groupCard .gTick .i{width:13px;height:13px}
+.groupCard.sel{border-color:var(--gc);box-shadow:0 0 0 3px color-mix(in srgb,var(--gc) 16%,transparent)}
+.groupCard.sel .gTick{opacity:1;transform:none}
+.groupCard:focus-within{outline:2px solid var(--primary);outline-offset:2px}
+.gDot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:1px;flex:none}
+.groupTabs{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
+.groupTabs button{--gc:var(--primary);display:flex;gap:10px;align-items:center;text-align:left;padding:12px;border-radius:12px;border:1.5px solid var(--line);background:var(--card);color:var(--text);box-shadow:var(--shadow)}
+.groupTabs button .i{flex:none;width:30px;height:30px;padding:6px;border-radius:9px;background:color-mix(in srgb,var(--gc) 13%,transparent);color:var(--gc)}
+.groupTabs button b{display:block;font-size:13px}
+.groupTabs button small{display:block;color:var(--muted);font-size:11.5px}
+.groupTabs button.mine{border-color:color-mix(in srgb,var(--gc) 45%,var(--line))}
+.groupTabs button.active{border-color:var(--gc);background:color-mix(in srgb,var(--gc) 8%,var(--card));box-shadow:0 0 0 3px color-mix(in srgb,var(--gc) 14%,transparent)}
+.unitChips{display:flex;flex-wrap:wrap;gap:8px}
+.unitChip{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1px solid var(--line-2);border-radius:999px;cursor:pointer;font-size:12.5px;background:var(--card)}
+.unitChip input{accent-color:var(--primary)}
+.unitChip small{color:var(--muted)}
+.unitChip:has(input:checked){border-color:var(--primary);background:var(--primary-soft)}
+.groupPills{display:flex;flex-wrap:wrap;gap:8px}
+tr.selRow td{background:color-mix(in srgb,var(--primary) 6%,transparent)}
+tr.muted td{opacity:.72}
+.stickyBar{position:sticky;bottom:12px;z-index:5;display:none;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;padding:12px 16px;border-radius:14px;background:var(--ink,#0A1A44);color:#fff;box-shadow:var(--shadow-lg)}
+.stickyBar.show{display:flex}
+.stickyBar .btn.ghost{color:#fff}
+.steps{display:flex;align-items:center;gap:4px}
+.steps span{width:18px;height:6px;border-radius:99px;background:var(--line-2)}
+.steps span.done{background:var(--ok)}
+.steps span.now{background:var(--primary)}
+.steps small{margin-left:6px;font-weight:700;font-size:12px}
+.pill small{opacity:.7;font-weight:600}

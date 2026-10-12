@@ -27,6 +27,7 @@ PAGES.dashboard = {
     const lowBal = wallet && Number(wallet.balance || 0) + Number(wallet.bonus_balance || 0) < Number(wallet.low_balance_threshold || 500);
     const unlabelled = sum(cache.recs, 'recommended');
     const attention = [
+      !(business.business_groups || []).length && isMgr() && ['Choose your business type to get ready-made products', 'info', 'catalog', 'Choose'],
       expired.length && [`${expired.length} expired item(s) still on the shelf`, 'bad', 'expiry', 'Remove them'],
       out.length && [`${out.length} product(s) out of stock`, 'bad', 'inventory', 'Reorder'],
       low.length && [`${low.length} product(s) running low`, 'warn', 'inventory', 'See list'],
@@ -37,6 +38,7 @@ PAGES.dashboard = {
       pendingDev.length && isMgr() && [`${pendingDev.length} device(s) waiting for approval`, 'info', 'devices', 'Review'],
       openShifts.length && isMgr() && [`${openShifts.length} till shift(s) left open from an earlier day`, 'warn', 'sales', 'Check'],
       unlabelled > 0 && canQR() && [`${num(unlabelled)} item(s) in stock have no QR label`, 'info', 'qr', 'Generate'],
+      (cache.printOrders || []).filter(o => o.status === 'ready').length && [`${(cache.printOrders || []).filter(o => o.status === 'ready').length} printed label order(s) ready from DeepQr`, 'ok', 'qr', 'View', "{tab:'print'}"],
       lowBal && isMgr() && [`QR wallet is low (${money(Number(wallet.balance) + Number(wallet.bonus_balance), wallet.currency)})`, 'warn', 'wallet', 'Top up']
     ].filter(Boolean);
     const days = Array.from({ length: 14 }, (_, i) => addDays(i - 13)).map(d => { const l = sales.filter(s => s.date === d); return { label: fmtD(d), short: d.slice(8), sales: net(l), profit: lineProfit(l.map(s => s.id)) }; });
@@ -52,7 +54,7 @@ PAGES.dashboard = {
      </div>
      <div class="grid g2" style="margin-top:16px">
       <div class="card"><div class="cardHead"><div><h3>Needs attention</h3><p>${attention.length ? 'Handle these to keep the business running smoothly.' : 'All clear — nothing needs you right now.'}</p></div></div>
-       ${attention.map(a => `<div class="row"><span><span class="statusDot ${a[1]}"></span>${esc(a[0])}</span><button class="btn small" onclick="go('${a[2]}')">${a[3]} ${icon('arrowRight')}</button></div>`).join('') || emptyState('check', 'Everything looks good', 'No low stock, expired items or late orders.')}</div>
+       ${attention.map(a => `<div class="row"><span><span class="statusDot ${a[1]}"></span>${esc(a[0])}</span><button class="btn small" onclick="go('${a[2]}',${a[4] || '{}'})">${a[3]} ${icon('arrowRight')}</button></div>`).join('') || emptyState('check', 'Everything looks good', 'No low stock, expired items or late orders.')}</div>
       ${isMgr() && wallet ? `<div class="walletCard"><div class="lbl">QR wallet</div><div class="big">${money(Number(wallet.balance || 0) + Number(wallet.bonus_balance || 0), wallet.currency)}</div>
         <div class="row2"><span>Main ${money(wallet.balance, wallet.currency)}</span><span>Bonus ${money(wallet.bonus_balance, wallet.currency)}</span><span>${wallet.free_remaining || 0} free QR left this month</span></div>
         <div class="row2"><span>≈ ${num(Math.floor((Number(wallet.balance || 0) + Number(wallet.bonus_balance || 0)) / Math.max(Number(wallet.fee || 25), 0.01)) + Number(wallet.free_remaining || 0))} labels at ${money(wallet.fee, wallet.currency)} each</span></div>
@@ -473,7 +475,11 @@ PAGES.settings = {
     const b = business, methods = (b.payment_methods || []).map(m => m.name || m);
     const tzs = ['Africa/Dar_es_Salaam', 'Africa/Nairobi', 'Africa/Kampala', 'Africa/Kigali', 'Africa/Lusaka', 'Africa/Johannesburg', 'Africa/Lagos', 'UTC'];
     const sw = (id, label, sub, on) => `<label class="chk" style="align-items:flex-start;margin:8px 0"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><span><b>${label}</b><br><small class="muted" style="font-weight:500">${sub}</small></span></label>`;
-    return `<form id="setF"><div class="grid g2">
+    const gs = b.business_groups || [];
+    return `<div class="card"><div class="cardHead"><div><h3>${icon('store')} Business type</h3><p>The groups of goods you sell. They decide your categories, the units shown first and the products suggested from the DeepQr catalogue.</p></div><button class="btn" onclick="openBusinessType()">${icon('edit')}Change</button></div>
+     <div class="groupPills">${gs.length ? gs.map(g => `<span class="chip" style="border-color:${GROUP_TONES[g]}">${groupDot(g)}${esc(groupName(g))}</span>`).join('') : '<span class="muted">Not set yet — choose what you sell.</span>'}</div>
+     <p class="muted" style="font-size:12.5px;margin:10px 0 0">Units used first: ${(b.units || []).length ? b.units.map(u => `<b class="mono">${esc(u)}</b>`).join(', ') : 'all master units'} · <button class="priceBtn" onclick="go('catalog')">Open the product catalogue</button></p></div>
+    <form id="setF"><div class="grid g2">
      <div class="card" style="margin:0"><div class="cardHead"><div><h3>Business details</h3><p>Shown on receipts and purchase orders.</p></div></div><div class="formGrid">
       <div class="field"><label for="bN">Business name *</label><input id="bN" required value="${esc(b.name)}"></div><div class="field"><label for="bTin">TIN</label><input id="bTin" value="${esc(b.tin || '')}"></div>
       <div class="field"><label for="bPh">Phone</label><input id="bPh" value="${esc(b.phone || '')}"></div><div class="field"><label for="bEm">Email</label><input id="bEm" type="email" value="${esc(b.email || '')}"></div>

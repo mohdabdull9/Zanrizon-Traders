@@ -250,6 +250,8 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         upd = ','.join(f'"{k}"=excluded."{k}"' for k in keys if k not in target) or f'"{target[0]}"=excluded."{target[0]}"'
                         sql += f' on conflict ({",".join(chr(34)+c+chr(34) for c in target)}) do update set {upd}'
+                if 'return=representation' not in prefer:   # like PostgREST: no RETURNING, so no SELECT policy needed
+                    cur.execute(sql, params); return []
                 cur.execute(f'with ins as ({sql} returning *) select coalesce(json_agg(row_to_json(ins)), \'[]\') from ins', params)
                 return cur.fetchone()[0]
             if method == 'PATCH':

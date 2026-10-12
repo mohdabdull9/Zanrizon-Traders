@@ -10,6 +10,10 @@ It is a static single-page app (`index.html` + `css/` + `js/`) backed by Supabas
 
 | Area | What it does |
 |---|---|
+| **Any goods business** | The owner picks one or more of six groups at sign-up: Food & Beverage, Health & Pharmacy, Household & General Merchandise, Fashion & Personal Care, Electronics & Technology, and Agro, Industrial & Bulk. Together they cover 31 subcategories. One shared unit list is used everywhere (PCS, DOZEN, PACK, BOX, CARTON, SET, BAG, KG, G, TON, LTR, ML, MTR, STRIP, BOTTLE, VIAL/AMPOULE). |
+| **Product catalogue** | 221 ready-made products sold in Tanzania, each with a code (e.g. `BEV001`), unit, pack size and suggested price. New businesses see the products for their groups, tick the ones they sell, set prices and add them in one step. They can still create and edit their own products, and suggest new ones. The platform owner approves suggestions, adds products and imports a CSV. QR labels still carry the business code, so a label only works for the business that printed it. |
+| **Label printing service** | Print labels yourself, or order printed labels from DeepQr: pick batches, copies, label size, collection or delivery, and a date. The fee comes from the QR wallet and is refunded if the order is cancelled or rejected. The owner portal has a print queue with a label sheet per client and a status timeline (requested → accepted → printing → ready → delivered). |
+| **Data download** | A single Excel table (or CSV) holds every sale line, payment, refund, delivery, damaged item, supplier payment, expense, stock correction, transfer, DeepQr fee and today's stock. Date, year, month, week and weekday columns make it ready for pivot tables. Filter by period, location, data type and product group. The Excel file can also include Summary, Monthly and "How to analyse" sheets. |
 | **Scan & Sell** | USB, Bluetooth and Android POS scanners (keyboard mode, with or without an Enter suffix, even when no field is selected), and phone/tablet cameras (back camera chosen automatically, camera switcher, torch). Labels that a scanner's keyboard layout mangles are still read. Scan into a cart, then take a split payment (cash + mobile money/card/bank, with a required reference). Also supports credit sales, loyalty points, discounts within each cashier's limit, held/parked sales, receipts by print or WhatsApp, and returns. |
 | **Till shifts** | Open a shift with a float, record cash in/out, and close with a counted cash-up. The difference is shown. Owners can require a shift before selling. |
 | **Customers & debts** | Customer accounts with a credit limit, a debt ledger, debt payments, a WhatsApp reminder and points. |
@@ -27,8 +31,9 @@ Run the SQL files in Supabase → **SQL Editor** (paste the whole file into a ne
 
 1. `supabase/migrations/20261010120000_deepqr_core.sql` (v1; skip it if you already ran it)
 2. `supabase/migrations/20261011120000_deepqr_v2.sql` (v2: credits, till, orders, documents, permissions, portal)
-3. Publish the app (merge to `main` for GitHub Pages).
-4. `supabase/migrations/20261011130000_deepqr_v2_hardening.sql`. Run this **after** the v2 app is live. It closes the old public username list.
+3. `supabase/migrations/20261012120000_deepqr_v3.sql` (v3: business groups, units, catalogue, print orders, data export)
+4. Publish the app (merge to `main` for GitHub Pages).
+5. `supabase/migrations/20261011130000_deepqr_v2_hardening.sql`. Run this **after** the v2 app is live. It closes the old public username list.
 
 **Portal activation code.** The platform owner email is seeded as `mohdabdull129@gmail.com`. Set a one-time activation code (keep it private):
 
@@ -44,8 +49,8 @@ The Supabase URL and anon key are in `js/config.js`. If the database is older th
 
 ## Tests
 
-* `supabase/tests/deepqr_db_test.sql` (v1) and `supabase/tests/deepqr_v2_test.sql` (v2, 115 checks) test the database: credits, scanning, checkout, credit, loyalty, shifts, orders and receipts, transfers, stock takes, reports, the portal, permissions and tenant isolation. Run each in a transaction (`begin;` + file). It ends by raising the report, which rolls everything back.
-* `tests/e2e_test.py` runs browser tests (Playwright, 61 checks). They drive the real app against a real Postgres database through `tests/local_backend.py`, a small stand-in for the Supabase REST, Auth and Storage APIs. Coverage includes:
+* `supabase/tests/deepqr_db_test.sql` (v1), `supabase/tests/deepqr_v2_test.sql` (v2, 115 checks) and `supabase/tests/deepqr_v3_test.sql` (v3, 52 checks) test the database: credits, scanning, checkout, credit, loyalty, shifts, orders and receipts, transfers, stock takes, reports, the portal, permissions and tenant isolation. Run each in a transaction (`begin;` + file). It ends by raising the report, which rolls everything back.
+* `tests/e2e_test.py` runs browser tests (Playwright, 85 checks). They drive the real app against a real Postgres database through `tests/local_backend.py`, a small stand-in for the Supabase REST, Auth and Storage APIs. Coverage includes:
   * top-up → portal approval
   * promo codes, custom pricing, blocking users
   * QR generation charged to free quota and then bonus
@@ -54,6 +59,9 @@ The Supabase URL and anon key are in `js/config.js`. If the database is older th
   * hold/resume, split and credit payments
   * POs with an invoice upload, partial delivery with damaged items, and supplier payment
   * reports, the scanner test page, staff creation and settings
+  * registering with business groups, adding catalogue products, suggesting a product and the owner approving it
+  * ordering printed labels and the owner's print queue
+  * Excel and CSV downloads, opened and checked
 
   ```
   supabase/tests/local/run.sh                    # fresh local database (Postgres on /tmp/pg:5433)
