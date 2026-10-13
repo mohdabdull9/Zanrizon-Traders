@@ -6,8 +6,8 @@ const posState = { cart: [], customer: null, discount: 0, points: 0, note: '', s
 let payState = null;
 
 function posKey() { return 'dq_cart_' + (me?.business_id || '') + '_' + (me?.id || ''); }
-function posSave() { lsSet(posKey(), JSON.stringify({ cart: posState.cart, customer: posState.customer, discount: posState.discount, shopId: posState.shopId })); }
-function posLoad() { const s = lsJson(posKey(), null); if (s) { posState.cart = s.cart || []; posState.customer = s.customer || null; posState.discount = Number(s.discount || 0); posState.shopId = s.shopId || null; } }
+function posSave() { lsSet(posKey(), JSON.stringify({ cart: posState.cart, customer: posState.customer, discount: posState.discount, shopId: posState.shopId, online: posState.online || null, points: posState.points || 0 })); }
+function posLoad() { const s = lsJson(posKey(), null); if (s) { posState.cart = s.cart || []; posState.online = s.online || null; if (s.online) posState.points = s.points || 0; posState.customer = s.customer || null; posState.discount = Number(s.discount || 0); posState.shopId = s.shopId || null; } }
 function posShopId() {
   if (me.role === 'cashier') return me.shop_id;
   if (posState.shopId && shopObj(posState.shopId)) return posState.shopId;
@@ -18,8 +18,9 @@ function posTotals() {
   const tax = sum(posState.cart, l => l.qty * l.price * (l.tax || 0) / 100);
   const disc = Math.min(Number(posState.discount || 0), sub + tax);
   const ptsVal = Math.round(Number(posState.points || 0) * Number(business.point_value || 0) * 100) / 100;
-  const total = Math.max(0, Math.round((sub + tax - disc - ptsVal) * 100) / 100);
-  return { sub, tax, disc, ptsVal, total, items: sum(posState.cart, 'qty') };
+  const fee = posState.online ? Number(posState.online.fee || 0) : 0;
+  const total = Math.max(0, Math.round((sub + tax - disc - ptsVal + fee) * 100) / 100);
+  return { sub, tax, disc, ptsVal, fee, total, items: sum(posState.cart, 'qty') };
 }
 function deviceBlocked() {
   if (!business?.device_lock) return null;
@@ -60,7 +61,7 @@ function posView() {
     ? `<span class="shiftChip"><span class="dot"></span>Shift since ${new Date(myShift.opened_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · float ${money(myShift.opening_float)}</span><button class="btn small" onclick="cashMoveModal()">${icon('coins')}Cash in/out</button><button class="btn small" onclick="closeShiftModal()">${icon('lock')}Close shift</button>`
     : `<span class="shiftChip off"><span class="dot"></span>No shift open</span><button class="btn small" onclick="openShiftModal()">${icon('unlock')}Open shift</button>`;
   const cats = [...new Set(cache.products.filter(p => p.active !== false && stock(shop.id, p.code) > 0).map(p => p.category || 'General'))].sort();
-  return `<div class="posTop">${shopPick}${shiftBar}${myDevice ? `<span class="chip ${myDevice.status === 'approved' ? 'ok' : 'warn'}" title="This device">${icon('phone')}${esc(myDevice.name)}</span>` : ''}</div>
+  return `${onlineBanner()}<div class="posTop">${shopPick}${shiftBar}${myDevice ? `<span class="chip ${myDevice.status === 'approved' ? 'ok' : 'warn'}" title="This device">${icon('phone')}${esc(myDevice.name)}</span>` : ''}</div>
   <div class="posGrid"><div>
    <div class="card"><div class="scanZone" id="scanZone"><div class="bigIco">${icon('qr')}</div><b style="font-size:16px">Scan an item</b><div class="muted" style="font-size:13px">QR labels, product barcodes or a typed serial. Each scan goes straight into the cart.</div>
      <form id="scanForm" class="scanInput" onsubmit="event.preventDefault()"><input id="scanInput" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Scan or type a code" placeholder="${m.hw ? 'Scanner ready — scan, or type a serial and press Enter' : 'Type a serial or code and press Enter'}"><button type="button" class="btn primary" onclick="const i=document.getElementById('scanInput');Scanner.emit(i.value,'typed');i.value='';i.focus()">Add</button></form>
@@ -88,7 +89,7 @@ function cartHtml() {
   ${posState.cart.length ? posState.cart.map((l, i) => `<div class="cartLine"><div style="min-width:0"><b>${esc(l.name)}</b><div class="muted" style="font-size:12px">${esc(l.code)} · ${can('can_edit_price') ? `<button class="priceBtn" onclick="posEditPrice(${i})" title="Change price">${money(l.price)}</button>` : money(l.price)}${l.price !== l.base_price ? ` <span class="tag warn">was ${money(l.base_price)}</span>` : ''}</div>${l.items ? `<div class="serials">${l.items.map(it => `<span class="serialChip">${esc(it.serial)}<button onclick="posRemoveSerial(${i},'${it.id}')" aria-label="Remove ${esc(it.serial)}">×</button></span>`).join('')}</div>` : ''}</div>
    ${l.items ? `<span class="tag info">${l.qty} scanned</span>` : `<div class="qtyBox"><button onclick="posQty(${i},${l.qty - 1})" aria-label="Less">−</button><input value="${l.qty}" inputmode="numeric" aria-label="Quantity" onchange="posQty(${i},this.value)"><button onclick="posQty(${i},${l.qty + 1})" aria-label="More">+</button></div>`}
    <b class="num right">${money(l.qty * l.price)}</b></div>`).join('') : `<div class="empty-state" style="padding:26px 10px">${icon('cart')}<br>Cart is empty — scan an item to start.</div>`}
-  <div class="totals"><div class="row"><span>Subtotal</span><b class="num">${money(t.sub)}</b></div>${t.tax ? `<div class="row"><span>Tax</span><b class="num">${money(t.tax)}</b></div>` : ''}<div class="row"><span>Discount <button class="priceBtn muted" onclick="posDiscount()">${t.disc ? 'change' : 'add'}</button></span><b class="num">− ${money(t.disc)}</b></div>${t.ptsVal ? `<div class="row"><span>Points (${posState.points})</span><b class="num">− ${money(t.ptsVal)}</b></div>` : ''}<div class="row grand"><span>Total</span><span class="num">${money(t.total)}</span></div></div>
+  <div class="totals"><div class="row"><span>Subtotal</span><b class="num">${money(t.sub)}</b></div>${t.tax ? `<div class="row"><span>Tax</span><b class="num">${money(t.tax)}</b></div>` : ''}<div class="row"><span>Discount <button class="priceBtn muted" onclick="posDiscount()">${t.disc ? 'change' : 'add'}</button></span><b class="num">− ${money(t.disc)}</b></div>${t.ptsVal ? `<div class="row"><span>Points (${posState.points})</span><b class="num">− ${money(t.ptsVal)}</b></div>` : ''}${t.fee ? `<div class="row"><span>Delivery fee</span><b class="num">${money(t.fee)}</b></div>` : ''}<div class="row grand"><span>Total</span><span class="num">${money(t.total)}</span></div></div>
   <button class="btn primary lg wide" style="margin-top:14px" ${posState.cart.length ? '' : 'disabled'} onclick="openPayment()" id="payBtn">${icon('wallet')}Take payment · ${money(t.total)}</button>`;
 }
 function updateCart() { const c = document.getElementById('cartCard'); if (c) c.innerHTML = cartHtml(); const mb = document.getElementById('mobileCartBar'); if (mb) mb.innerHTML = mobileBarHtml(); posSave(); }
@@ -121,6 +122,7 @@ async function posScan(code, source, parsed) {
     let line = posState.cart.find(l => l.product_id === p.id && l.items && l.price === Number(p.price));
     if (!line) { line = { product_id: p.id, code: p.code, name: p.name, price: Number(p.price), base_price: Number(p.price), tax: Number(p.tax || 0), qty: 0, items: [] }; posState.cart.push(line); }
     line.items.push({ id: it.id, serial: it.serial }); line.qty = line.items.length;
+    if (posState.online?.pending?.[p.id] > 0) { posState.online.pending[p.id]--; setTimeout(() => { const b = document.querySelector('.onlineBanner'); if (b) b.outerHTML = onlineBanner(); }, 0); }
     const dd = it.expiry_date ? daysUntil(it.expiry_date) : null;
     Scanner.feedback(true, `${p.name} · ${it.serial} · ${money(p.price)}${data.other_shop ? ` (labelled for ${data.shop_name || 'another shop'})` : ''}${dd !== null && dd <= 7 ? ` · expires in ${dd} day(s)` : ''}`);
     updateCart();
@@ -187,7 +189,9 @@ function openCustomerPicker(onPick) {
 /* ---------- payment ---------- */
 function openPayment() {
   if (!posState.cart.length) return;
-  payState = { lines: [{ method: 'Cash', amount: '', reference: '' }] };
+  const on = posState.online;
+  if (on && Object.values(on.pending || {}).some(q => q > 0)) { toast('Scan the remaining labelled items first (or choose “add without scanning”)', 'bad'); return; }
+  payState = { lines: on && on.paid ? [{ method: on.method, amount: posTotals().total, reference: on.reference }] : [{ method: 'Cash', amount: '', reference: '' }] };
   drawPayment();
 }
 function payCalc() {
@@ -258,7 +262,8 @@ async function completeSale(btn) {
       payments: payState.lines.filter(l => Number(l.amount) > 0).map(l => ({ method: l.method, amount: Number(l.amount), reference: (l.reference || '').trim() }))
     };
     let r;
-    try { r = await rpc('dq_checkout2', { p: payload }); }
+    if (posState.online) payload.online_order_id = posState.online.id;
+    try { r = await rpc(posState.online ? 'dq_checkout3' : 'dq_checkout2', { p: payload }); }
     catch (e) { toast(errMsg(e), 'bad'); beep(false); return; }
     // local cache updates
     const sale = r.sale; cache.sales.unshift(sale); cache.saleLines.push(...(r.lines || []));
@@ -267,7 +272,8 @@ async function completeSale(btn) {
     const sold = new Set((r.lines || []).filter(l => l.item_id).map(l => l.item_id)); cache.items = cache.items.filter(i => !sold.has(i.id));
     if (r.customer) { const cc = customerById(r.customer.id); if (cc) Object.assign(cc, r.customer); else cache.customers.push(r.customer); }
     cache.activity.unshift({ description: `Sale ${sale.receipt}: ${money(sale.total)}`, by_name: me.name, created_at: new Date().toISOString() });
-    posState.cart = []; posState.discount = 0; posState.points = 0; posState.note = ''; posState.customer = null; posSave();
+    if (posState.online) { toast(`Online order ${posState.online.no} completed${r.bonus_points ? ` · +${r.bonus_points} bonus points` : ''}`, 'ok'); if (cache.online) { const oo = cache.online.find(x => x.id === posState.online.id); if (oo) oo.status = 'completed'; } }
+    posState.cart = []; posState.discount = 0; posState.points = 0; posState.note = ''; posState.customer = null; posState.online = null; posSave();
     beep(true); renderView(); showReceipt(sale, r.lines, r.payments, r.customer);
     refreshRecs();
   });

@@ -72,7 +72,7 @@ do $$ declare r json; yr text := extract(year from now())::text; pn int; begin
   perform pg_temp.ok('second batch continues numbering at 004', r->>'first_serial' like '%004', r->>'first_serial');
 end $$;
 select pg_temp.ok('QR payload carries business + shop + product + serial',
-  (select bool_and(qr_payload ~ '^DQ1\|[A-Z0-9]+\|S[0-9]+\|[^|]+\|[0-9]{9,}$') from product_items where product_id = pg_temp.ctx('prod')::uuid),
+  (select bool_and(qr_payload ~ '^DQ1\|[A-Z0-9]+\|S[0-9]+\|[^|]+\|[0-9]{9,}$' or qr_payload ~ '^https?://.*[?&]dq=1\.[A-Z0-9]+\.S[0-9]+\.[^.]+\.[0-9]{9,}$') from product_items where product_id = pg_temp.ctx('prod')::uuid),
   (select min(qr_payload) from product_items where product_id = pg_temp.ctx('prod')::uuid));
 select pg_temp.ok('wallet ledger shows charge', exists (select 1 from wallet_transactions where business_id = pg_temp.ctx('biz')::uuid and type='qr_charge' and amount = -75));
 select pg_temp.ok('recommendation = stock 20 - 5 tagged = 15',

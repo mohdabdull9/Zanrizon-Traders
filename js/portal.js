@@ -5,25 +5,46 @@
    ============================================================================= */
 let admF = { q: '', status: '', sort: 'recent' };
 async function loadAdmin() {
-  try { adminData = await rpc('dq_admin_overview'); const pr = await sb.rpc('dq_admin_print_orders'); adminData.prints = pr.data || []; }
-  catch (e) { adminData = null; toast('Portal: ' + errMsg(e), 'bad'); }
+  try {
+    adminData = await rpc('dq_admin_overview');
+    const [pr, pl, st, su] = await Promise.all([sb.rpc('dq_admin_print_orders'), sb.rpc('dq_admin_platform'), sb.rpc('dq_admin_staff'), sb.rpc('dq_admin_suppliers')]);
+    adminData.prints = pr.data || []; adminData.platform = pl.data || {}; adminData.staff = st.data || []; adminData.suppliers = su.data || [];
+    if (pl.data?.role) adminRole = pl.data.role;
+  } catch (e) { adminData = null; toast('Portal: ' + errMsg(e), 'bad'); }
 }
-async function reloadAdmin(msg) { await loadAdmin(); if (view === 'portal') renderView(); if (msg) toast(msg, 'ok'); }
+async function reloadAdmin(msg) { await loadAdmin(); if (view === 'portal') render(); if (msg) toast(msg, 'ok'); }
 function pcur() { return adminData?.settings?.currency || 'TZS'; }
 function pm(n) { return money(n, pcur()); }
-
+// same rule as dq_admin_can() on the server
+function pCan(perm) { const r = adminRole || 'owner'; return r === 'owner' || (r === 'admin' && perm !== 'staff') || ({ finance: ['finance', 'prints', 'view'], support: ['support', 'prints', 'view'], catalog: ['catalog', 'view'] }[r] || []).includes(perm); }
+const PORTAL_TABS = [
+  ['Overview', [['overview', 'Overview', 'dashboard', 'view']]],
+  ['Clients', [['businesses', 'Businesses', 'store', 'view'], ['suppliers', 'Suppliers', 'truck', 'view'], ['shoppers', 'Shoppers & online', 'users', 'view']]],
+  ['Money', [['topups', 'Top-ups', 'wallet', 'finance'], ['payments', 'Payment checks', 'shield', 'finance'], ['credits', 'Credits & bonuses', 'gift', 'finance'], ['ledger', 'Ledger', 'history', 'finance']]],
+  ['Operations', [['prints', 'Print orders', 'printer', 'prints'], ['catalog', 'Catalogue', 'spark', 'catalog'], ['qr', 'QR activity', 'qr', 'view'], ['announce', 'Announcements', 'megaphone', 'support']]],
+  ['Platform', [['staff', 'Team & roles', 'users', 'view'], ['audit', 'Audit log', 'history', 'view'], ['settings', 'Settings', 'settings', 'settings']]]
+];
+function portalSections() { return PORTAL_TABS.map(([g, items]) => [g, items.filter(t => pCan(t[3]))]).filter(([, items]) => items.length); }
+function portalCount(tab) {
+  const d = adminData; if (!d) return 0;
+  return ({ topups: (d.topups || []).filter(t => t.status === 'pending').length, prints: (d.prints || []).filter(o => ['requested', 'accepted', 'printing'].includes(o.status)).length,
+    catalog: (catData || []).filter(c => c.status === 'pending').length, payments: (d.platform?.online?.unverified || 0) + (d.platform?.disputes || []).length,
+    suppliers: (d.suppliers || []).filter(x => !x.verified && x.status === 'active').length })[tab] || 0;
+}
 PAGES.portal = {
-  title: 'Owner portal', sub: 'Control every business, account, shop, device and credit on DeepQr',
+  title: 'Owner portal', sub: () => { const t = PORTAL_TABS.flatMap(g => g[1]).find(x => x[0] === (viewParams.tab || 'overview')); return t ? t[1] + ' · control every business, supplier, shopper and payment on DeepQr' : ''; },
   actions: () => `<button class="btn" onclick="reloadAdmin('Refreshed')">${icon('refund')}Refresh</button>`,
   render: () => {
-    if (!adminData) { loadAdmin().then(() => { if (adminData) renderView(); }); return `<div class="card"><div class="empty"><span class="spinner"></span> Loading the portal…</div></div>`; }
-    const tab = viewParams.tab || 'overview', pend = adminData.topups.filter(t => t.status === 'pending');
-    const tabs = [['overview', 'Overview', 'dashboard'], ['businesses', 'Businesses', 'store', adminData.businesses.length], ['topups', 'Top-ups', 'wallet', pend.length || '', true], ['credits', 'Credits & bonuses', 'gift'], ['catalog', 'Catalogue', 'spark', (catData || []).filter(c => c.status === 'pending').length || '', true], ['prints', 'Print orders', 'printer', (adminData.prints || []).filter(o => ['requested', 'accepted', 'printing'].includes(o.status)).length || '', true], ['qr', 'QR activity', 'qr'], ['announce', 'Announcements', 'megaphone'], ['ledger', 'Ledger', 'history'], ['audit', 'Audit log', 'shield'], ['settings', 'Settings', 'settings']];
-    const v = { overview: pOverview, businesses: pBusinesses, topups: pTopups, credits: pCredits, catalog: pCatalog, prints: pPrints, qr: pQr, announce: pAnnounce, ledger: pLedger, audit: pAudit, settings: pSettings }[tab] || pOverview;
-    return tabbar('portalTabs', tabs, tab, 'pTab') + v();
+    if (!adminData) { loadAdmin().then(() => { if (adminData) render(); }); return `<div class="card"><div class="empty"><span class="spinner"></span> Loading the portal…</div></div>`; }
+    let tab = viewParams.tab || 'overview';
+    const allowed = portalSections().flatMap(g => g[1]).map(t => t[0]);
+    if (!allowed.includes(tab)) tab = allowed[0] || 'overview';
+    const v = { overview: pOverview, businesses: pBusinesses, suppliers: pSuppliers, shoppers: pShoppers, topups: pTopups, payments: pPayments, credits: pCredits, catalog: pCatalog, prints: pPrints, qr: pQr, announce: pAnnounce, ledger: pLedger, staff: pStaff, audit: pAudit, settings: pSettings }[tab] || pOverview;
+    if (!me) return v();   // DeepQr team: the sections are the left sidebar
+    return `<div class="portalWrap"><nav class="portalRail" aria-label="Portal sections">${portalSections().map(([g, items]) => `<div class="railSec">${g}</div>` + items.map(t => `<button class="${t[0] === tab ? 'active' : ''}" onclick="pTab('${t[0]}')">${icon(t[2])}<span>${t[1]}</span>${portalCount(t[0]) ? `<span class="badge teal">${portalCount(t[0])}</span>` : ''}</button>`).join('')).join('')}</nav><div class="portalMain">${v()}</div></div>`;
   }
 };
-function pTab(t) { setTab('tab', t); }
+function pTab(t) { if (!me) { go('portal:' + t); return; } setTab('tab', t); }
 
 /* ---------------- overview ---------------- */
 function pOverview() {
@@ -36,6 +57,7 @@ function pOverview() {
   const top = b.slice().sort((x, y) => y.total_qr - x.total_qr).slice(0, 8);
   return `<div class="grid g4">${kpi('store', 'Businesses', b.length, `${active30} active in 30 days · ${b.filter(x => x.status === 'suspended').length} suspended`)}${kpi('qr', 'QR labels issued', num(t.qr_total), `${num(sum(d.qr_by_month.filter(x => x.month === months[5]), 'qrs'))} this month`, 'teal')}${kpi('wallet', 'Top-ups received', pm(t.topups_approved), `${pm(t.topups_pending)} waiting`, Number(t.topups_pending) ? 'warn' : '')}${kpi('coins', 'Credits held by businesses', pm(t.liability), `+ ${pm(t.bonus_outstanding)} bonus`)}</div>
    <div class="grid g4" style="margin-top:12px">${kpi('users', 'User accounts', num(t.users), `${num(sum(b, 'staff_blocked'))} blocked/disabled`)}${kpi('phone', 'Devices', num(t.devices))}${kpi('cart', 'Sales through DeepQr (30d)', pm(t.sales_30d), 'all businesses')}${kpi('chart', 'QR fee', pm(d.settings.qr_fee), `${d.settings.free_qr_monthly || 0} free / month`)}</div>
+   <div class="grid g4" style="margin-top:12px">${kpi('truck', 'Suppliers', num(d.platform?.suppliers?.total || 0), `${d.platform?.suppliers?.verified || 0} verified`)}${kpi('users', 'Shoppers', num(d.platform?.customers || 0), `${d.platform?.stores || 0} online shops open`)}${kpi('cart', 'Online orders', num(d.platform?.online?.total || 0), `${d.platform?.online?.open || 0} in progress`)}${kpi('coins', 'Online sales', pm(d.platform?.online?.value || 0), 'completed through DeepQr', 'teal')}</div>
    ${pend.length ? `<div class="banner warn" style="margin-top:16px">${icon('wallet')}<div><b>${pend.length} top-up request(s) waiting — ${pm(sum(pend, 'amount'))}</b><p>Check each reference against your M-Pesa / bank statement, then approve.</p></div><button class="btn small" onclick="pTab('topups')">Review</button></div>` : ''}
    <div class="grid g2" style="margin-top:16px"><div class="card"><div class="cardHead"><div><h3>Money in vs. credits used</h3><p>Last 6 months</p></div></div>${barChart(qm, [['topup', '#2F5BEA', 'Top-ups approved'], ['qr', '#14B8A6', 'Credits used on QR']], { h: 200 })}</div>
     <div class="card"><div class="cardHead"><div><h3>Top businesses by QR labels</h3></div></div>${hBars(top, 'name', 'total_qr', num)}</div></div>
@@ -200,6 +222,8 @@ function pSettings() {
     <div class="field"><label for="psFee">Price per QR label</label><input id="psFee" type="number" min="0" step="any" value="${s.qr_fee}"></div><div class="field"><label for="psCur">Currency</label><input id="psCur" value="${esc(s.currency)}" maxlength="5"></div><div class="field"><label for="psMin">Minimum top-up</label><input id="psMin" type="number" min="0" step="any" value="${s.min_topup}"></div><div class="field"><label for="psLow">Warn businesses below</label><input id="psLow" type="number" min="0" step="any" value="${Number(s.low_balance_threshold || 500)}"></div></div>
     <label class="chk" style="margin-top:10px"><input type="checkbox" id="psNeg" ${s.allow_negative_balance ? 'checked' : ''}>Allow every business to go below zero (otherwise set a credit limit per business)</label>
     <p class="muted" style="font-size:12.5px">Last changed ${s.updated_at ? fmtDT(s.updated_at) : '—'} ${s.updated_by ? 'by ' + esc(s.updated_by) : ''}</p></div>
+   <div class="card" style="margin:0"><div class="cardHead"><div><h3>Smart QR address</h3><p>New labels become links to this address, so any phone camera opens a “genuine product” check. Use the address where the app is published.</p></div></div>
+    <div class="searchLine" style="margin:0"><input class="input mono" id="psUrl" value="${esc(s.public_url || '')}" placeholder="https://your-name.github.io/your-repo/"><button type="button" class="btn" onclick="pSaveUrl(this)">${icon('check')}Save</button></div><p class="muted" style="font-size:12.5px">This browser is at <span class="mono">${esc(location.origin + location.pathname)}</span>${s.public_url && !(location.origin + location.pathname).startsWith(String(s.public_url).replace(/index\.html?$/, '')) ? ' — <button type="button" class="priceBtn" onclick="document.getElementById(\'psUrl\').value=location.origin+location.pathname">use this address</button>' : ''}</p></div>
    <div class="card" style="margin:0"><div class="cardHead"><div><h3>Label printing service</h3><p>Businesses can order printed QR labels from you.</p></div></div><div class="formGrid">
     <div class="field"><label for="psPf">Price per printed label</label><input id="psPf" type="number" min="0" step="any" value="${Number(s.print_fee_per_label ?? 20)}"></div><div class="field"><label for="psDf">Delivery fee</label><input id="psDf" type="number" min="0" step="any" value="${Number(s.print_delivery_fee ?? 0)}"></div><div class="field"><label for="psLd">Minimum days to print</label><input id="psLd" type="number" min="0" value="${Number(s.print_lead_days ?? 2)}"></div></div>
     <div class="field" style="margin-top:10px"><label for="psPn">Note shown to businesses</label><input id="psPn" value="${esc(s.print_note || '')}"></div></div>
@@ -315,3 +339,60 @@ async function pPrintLabels(id) {
   modal(`<div class="cardHead noPrint"><div><h3>${esc(o.order_no)} · ${esc(d.business.name)} (${esc(d.business.code)})</h3><p>${labels.length} label(s), ${esc(o.label_size)} size. Each QR carries the business code <b class="mono">${esc(d.business.code)}</b>, so it only scans in their account.</p></div><div class="actions"><button class="btn primary" onclick="printModal()">${icon('printer')}Print</button>${o.status === 'accepted' || o.status === 'requested' ? `<button class="btn" onclick="closeModal();rpcToast('dq_admin_print_update',{p:{id:'${id}',status:'printing'}},'Marked as printing').then(()=>reloadAdmin())">Mark printing</button>` : ''}<button class="btn ghost" onclick="closeModal()">${icon('x')}</button></div></div>
    <div class="labelSheet cols${cols}">${labels.map(l => `<div class="qrLabel"><div class="lbBiz">${esc(d.business.name)}</div><div class="lbName">${esc(l.product)}</div>${qrSvg(l.payload, 3)}<div class="lbSerial">${esc(l.serial)}</div><div class="lbMeta">${esc(l.code)} · ${esc(l.shop_code || '')} · ${money(l.price, pcur())}${l.expiry ? ' · EXP ' + esc(l.expiry) : ''}</div></div>`).join('')}</div>`, 'wide');
 }
+
+/* ---------------- v4: suppliers, shoppers & online, payment checks, team ---------------- */
+let pSupF = '';
+function pSuppliers() {
+  let l = adminData.suppliers || [];
+  if (pSupF === 'unverified') l = l.filter(x => !x.verified); else if (pSupF === 'suspended') l = l.filter(x => x.status === 'suspended');
+  const so = adminData.platform?.supplier_orders || {};
+  return `<div class="grid g4">${kpi('truck', 'Suppliers', (adminData.suppliers || []).length, `${(adminData.suppliers || []).filter(x => x.verified).length} verified`)}${kpi('clock', 'Orders waiting for suppliers', so.sent || 0, `${so.confirmed || 0} confirmed / dispatched`, so.sent ? 'warn' : '')}${kpi('check', 'Delivered orders', so.delivered || 0, `${so.rejected || 0} declined`)}${kpi('shield', 'To verify', (adminData.suppliers || []).filter(x => !x.verified && x.status === 'active').length, 'check TIN & details', 'teal')}</div>
+   <div class="card" style="margin-top:16px"><div class="pillRow">${[['', 'All'], ['unverified', 'Not verified'], ['suspended', 'Suspended']].map(([k, lb]) => `<button class="pill ${pSupF === k ? 'active' : ''}" onclick="pSupF='${k}';renderView()">${lb}</button>`).join('')}</div>
+   <div class="tableWrap"><table><thead><tr><th>Supplier</th><th>Contact</th><th>Supplies</th><th class="right">Products</th><th class="right">Businesses</th><th class="right">Orders</th><th class="right">Sales</th><th>Status</th><th></th></tr></thead><tbody>
+   ${l.map(x => `<tr><td><b>${esc(x.company_name)}</b> ${x.verified ? '<span class="tag ok">✔ Verified</span>' : ''}<span class="sub">${esc(x.code || '')} · joined ${fmtD(x.created_at)}${x.tin ? ' · TIN ' + esc(x.tin) : ''}</span></td><td>${esc(x.contact_person || '')}<span class="sub">${esc(x.phone || '')} · ${esc(x.login_email || x.email || '')}</span></td><td>${(x.groups || []).map(g => groupDot(g) + esc(groupName(g))).join('<br>')}</td><td class="right num">${x.products}</td><td class="right num">${x.businesses}</td><td class="right num">${x.orders}</td><td class="right num">${pm(x.sales)}</td><td>${x.status === 'suspended' ? '<span class="tag bad">Suspended</span>' : '<span class="tag ok">Active</span>'}${x.admin_note ? `<span class="sub">${esc(x.admin_note)}</span>` : ''}</td>
+    <td>${pCan('support') ? `<div class="actions" style="flex-wrap:nowrap">${x.verified ? `<button class="btn small ghost" onclick="pSetSup('${x.id}',{verified:false})">Unverify</button>` : `<button class="btn small success" onclick="pSetSup('${x.id}',{verified:true})">${icon('check')}Verify</button>`}${x.status === 'suspended' ? `<button class="btn small" onclick="pSetSup('${x.id}',{status:'active'})">${icon('unlock')}</button>` : `<button class="btn small ghost" onclick="pSuspendSup('${x.id}')" title="Suspend">${icon('ban')}</button>`}</div>` : ''}</td></tr>`).join('') || '<tr><td colspan="9" class="empty">No suppliers yet.</td></tr>'}
+   </tbody></table></div></div>`;
+}
+async function pSetSup(id, p) { const r = await rpcToast('dq_admin_set_supplier', { p_id: id, p }, 'Supplier updated'); if (r) reloadAdmin(); }
+function pSuspendSup(id) { askBox('Suspend this supplier?', 'They can sign in but cannot answer orders until you reactivate them.', { label: 'Reason', required: true }, 'Suspend', async (v, b) => { await withBusy(b, async () => { closeModal(); await pSetSup(id, { status: 'suspended', note: v }); }); }); }
+function pShoppers() {
+  const p = adminData.platform || {}, o = p.online || {};
+  return `<div class="grid g4">${kpi('users', 'Shopper accounts', num(p.customers || 0))}${kpi('store', 'Online shops open', p.stores || 0)}${kpi('cart', 'Online orders', num(o.total || 0), `${o.open || 0} in progress`)}${kpi('coins', 'Online sales completed', pm(o.value || 0), `${o.completed || 0} orders`, 'teal')}</div>
+   <div class="card" style="margin-top:16px"><div class="cardHead"><div><h3>Latest online orders</h3><p>Across all DeepQr shops.</p></div></div><div class="tableWrap"><table><thead><tr><th>Order</th><th>Shop</th><th>Shopper</th><th>Type</th><th>Payment</th><th class="right">Total</th><th>Status</th></tr></thead><tbody>
+   ${(p.online_list || []).map(x => `<tr><td class="mono">${esc(x.order_no)}<span class="sub">${fmtDT(x.created_at)}</span></td><td>${esc(x.business)}</td><td>${esc(x.customer_name)}</td><td>${x.fulfilment === 'delivery' ? 'Delivery' : 'Pickup'}</td><td>${esc(x.payment_method)}<span class="sub">${esc((PAY_LABEL[x.payment_status] || [x.payment_status])[0])}</span></td><td class="right num">${pm(x.total)}</td><td><span class="tag ${x.status === 'completed' ? 'ok' : ['cancelled', 'rejected'].includes(x.status) ? 'gray' : 'warn'}">${esc(OO_LABEL[x.status] || x.status)}</span></td></tr>`).join('') || '<tr><td colspan="7" class="empty">No online orders yet.</td></tr>'}</tbody></table></div></div>`;
+}
+function pPayments() {
+  const p = adminData.platform || {}, pend = (adminData.topups || []).filter(t => t.status === 'pending'), sp = p.supplier_payments || {};
+  return `<div class="banner info">${icon('shield')}<div><b>How DeepQr verifies money between users</b><p>Every mobile-money or bank payment carries its transaction reference. The receiving side checks it on their own statement and confirms it: DeepQr for wallet top-ups, the shop for online orders, the supplier for supplier payments. A reference can only be used once. Disputed payments show up here.</p></div></div>
+   <div class="grid g4">${kpi('wallet', 'Top-ups to check', pend.length, pm(sum(pend, 'amount')), pend.length ? 'warn' : '')}${kpi('cart', 'Shop payments to check', p.online?.unverified || 0, 'online orders waiting for the shop')}${kpi('check', 'Supplier payments', `${sp.confirmed || 0} confirmed`, `${sp.unverified || 0} waiting`)}${kpi('alert', 'Disputes', (p.disputes || []).length, 'supplier says not received', (p.disputes || []).length ? 'bad' : 'teal')}</div>
+   <div class="grid g2" style="margin-top:16px"><div class="card"><div class="cardHead"><div><h3>Top-ups waiting</h3></div><button class="btn small" onclick="pTab('topups')">Review</button></div>${pend.slice(0, 8).map(t => `<div class="row"><span><b>${pm(t.amount)}</b> · ${esc(t.business_name)}<small class="muted" style="display:block">${esc(t.method)} <span class="mono">${esc(t.reference)}</span> · ${ago(t.created_at)}</small></span><span class="tag warn">Waiting</span></div>`).join('') || '<p class="muted">Nothing waiting.</p>'}</div>
+    <div class="card"><div class="cardHead"><div><h3>Disputed supplier payments</h3><p>Call both sides; ask the business for the bank or M-Pesa slip.</p></div></div>${(p.disputes || []).map(x => `<div class="row"><span><b>${pm(x.amount)}</b> · ${esc(x.business)} → ${esc(x.supplier)}<small class="muted" style="display:block">${esc(x.method)} ${esc(x.reference || '')} · “${esc(x.verify_note || '')}”</small></span><small>${fmtD(x.verified_at)}</small></div>`).join('') || '<p class="muted">No disputes. 🎉</p>'}</div></div>
+   <div class="card"><div class="cardHead"><div><h3>Want automatic mobile-money confirmation?</h3><p>Payments today are confirmed by the receiver checking their statement. Instant confirmation needs a merchant account with a payment provider (for example M-Pesa, Airtel Money or an aggregator such as Selcom or AzamPay). Their callback then marks payments as verified automatically — DeepQr is ready to plug that in.</p></div></div></div>`;
+}
+function pStaff() {
+  const st = adminData.staff || [], roles = { owner: 'Owner — everything', admin: 'Administrator — everything except the team', finance: 'Finance — top-ups, wallets, credits, printing', support: 'Support — businesses, blocks, announcements, printing', catalog: 'Catalogue — product catalogue' };
+  return `<div class="card"><div class="cardHead"><div><h3>DeepQr team</h3><p>Give assistants their own login with only the access they need. Every action is recorded in the audit log under their email.</p></div>${pCan('staff') ? `<button class="btn primary" onclick="pInviteStaff()">${icon('plus')}Add team member</button>` : ''}</div>
+   <div class="tableWrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Last active</th><th>Added by</th><th></th></tr></thead><tbody>
+   ${st.map(a => `<tr><td><b>${esc(a.name || '—')}</b>${a.me ? ' <span class="tag info">You</span>' : ''}</td><td>${esc(a.email)}</td><td><span class="tag ${a.role === 'owner' ? 'ok' : 'gray'}">${esc(a.role)}</span></td><td>${!a.active ? '<span class="tag gray">Disabled</span>' : a.claimed ? '<span class="tag ok">Active</span>' : '<span class="tag warn">Invited — code not used yet</span>'}</td><td>${a.last_seen ? ago(a.last_seen) : '—'}</td><td>${esc(a.invited_by || '')}</td>
+    <td>${pCan('staff') && a.role !== 'owner' && !a.me ? `<div class="actions" style="flex-wrap:nowrap"><select class="input" style="padding:5px 8px" onchange="pStaffUpd('${jsq(a.email)}',this.value,null)">${['admin', 'finance', 'support', 'catalog'].map(r => `<option ${a.role === r ? 'selected' : ''}>${r}</option>`).join('')}</select><button class="btn small ${a.active ? 'ghost' : 'success'}" onclick="pStaffUpd('${jsq(a.email)}',null,${!a.active})">${a.active ? icon('ban') : icon('unlock')}</button><button class="btn small ghost" onclick="pStaffDel('${jsq(a.email)}')">${icon('trash')}</button></div>` : ''}</td></tr>`).join('')}
+   </tbody></table></div></div>
+   <div class="card"><div class="cardHead"><div><h3>What each role can do</h3></div></div>${Object.entries(roles).map(([k, v]) => `<div class="row"><span><span class="tag gray">${k}</span> ${v.split(' — ')[1]}</span></div>`).join('')}</div>`;
+}
+function pInviteStaff() {
+  modal(`<form id="psF"><div class="cardHead"><div><h3>Add a team member</h3><p>They sign in at <b>DeepQr team → Open the platform portal</b> with this email, a password they choose and the one-time code you give them.</p></div><button type="button" class="btn ghost" onclick="closeModal()">${icon('x')}</button></div>
+   <div class="formGrid"><div class="field"><label>Name</label><input id="psN" required></div><div class="field"><label>Email</label><input id="psE" type="email" required></div><div class="field"><label>Role</label><select id="psR"><option value="support">Support</option><option value="finance">Finance</option><option value="catalog">Catalogue</option><option value="admin">Administrator</option></select></div></div>
+   <div id="psErr" class="bad" style="min-height:20px;margin-top:8px"></div><div class="actions"><button class="btn primary">${icon('check')}Create invitation</button></div></form>`, 'narrow');
+  document.getElementById('psF').onsubmit = async e => {
+    e.preventDefault();
+    await withBusy(e.submitter, async () => {
+      try {
+        const r = await rpc('dq_admin_invite_staff', { p_email: document.getElementById('psE').value, p_name: document.getElementById('psN').value, p_role: document.getElementById('psR').value });
+        modal(`<div class="cardHead"><div><h3>${icon('check')} Invitation ready</h3><p>Give these to ${esc(r.email)} privately. The code works once and is not shown again.</p></div></div><dl class="kv"><dt>Email</dt><dd>${esc(r.email)}</dd><dt>Role</dt><dd>${esc(r.role)}</dd><dt>One-time code</dt><dd class="mono-big">${esc(r.code)}</dd><dt>Portal</dt><dd>${esc(location.origin + location.pathname)} → Sign in → “Open the platform portal”</dd></dl><div class="actions" style="margin-top:14px"><button class="btn" onclick="copyText('Email: ${jsq(r.email)}  Code: ${jsq(r.code)}  Portal: ${jsq(location.origin + location.pathname)}','Invitation copied')">${icon('copy')}Copy</button><button class="btn primary" onclick="closeModal();reloadAdmin()">Done</button></div>`, 'narrow');
+      } catch (x) { document.getElementById('psErr').textContent = errMsg(x); }
+    });
+  };
+}
+async function pStaffUpd(email, role, active) { const { error } = await sb.rpc('dq_admin_update_staff', { p_email: email, p_role: role, p_active: active }); if (error) toast(errMsg(error), 'bad'); else reloadAdmin('Team updated'); }
+function pStaffDel(email) { confirmBox('Remove this team member?', 'They lose access to the platform portal immediately.', 'Remove', async b => { await withBusy(b, async () => { const { error } = await sb.rpc('dq_admin_remove_staff', { p_email: email }); if (error) toast(errMsg(error), 'bad'); closeModal(); reloadAdmin('Removed'); }); }, 'danger'); }
+
+async function pSaveUrl(btn) { await withBusy(btn, async () => { const r = await rpcToast('dq_admin_set_public_url', { p_url: document.getElementById('psUrl').value }, 'QR address saved'); if (r !== undefined) reloadAdmin(); }); }
