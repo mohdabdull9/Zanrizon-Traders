@@ -151,7 +151,7 @@ select pg_temp.ok('platform owner sees every print order with the client', (sele
 do $$ declare r json; begin
   r := dq_admin_print_labels(pg_temp.c('po1')::uuid);
   perform pg_temp.ok('label sheet: QR payload carries the business code', json_array_length(r->'labels') = 4
-     and (r->'labels'->0->>'payload') like 'DQ1|DEM|%' and r->'business'->>'name' = 'DEMO', (r->'labels'->0)::text);
+     and (r->'labels'->0->>'payload') ~ '(^DQ1\|DEM\||dq=1\.DEM\.)' and r->'business'->>'name' = 'DEMO', (r->'labels'->0)::text);
   r := dq_admin_print_update(jsonb_build_object('id', pg_temp.c('po1'), 'status', 'accepted', 'promised_date', current_date + 3));
   perform pg_temp.ok('admin accepts with a promised date', r->>'status' = 'accepted' and (r->>'promised_date')::date = current_date + 3
      and json_array_length(r->'history') = 2);

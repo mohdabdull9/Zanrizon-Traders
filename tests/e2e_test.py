@@ -120,7 +120,7 @@ with sync_playwright() as p:
     # ================================================================== 2. platform owner portal
     ad = new_page(browser)
     login(ad, 'mohdabdull129@gmail.com')
-    ad.wait_for_selector('#portalTabs', timeout=10000)
+    ad.wait_for_selector('.nav button:has-text("Top-ups")', timeout=10000); ad.wait_for_timeout(500)
     check('admin opens owner portal', 'Owner portal' in ad.inner_text('#content'))
     shot(ad, '03-portal-overview')
     ad.evaluate("pTab('topups')"); ad.wait_for_timeout(300)
@@ -181,7 +181,7 @@ with sync_playwright() as p:
     pg.keyboard.press('Escape')
     serials = sql("select serial from product_items where product_id='00000000-0000-4000-8000-000000000701' order by serial").split('\n')
     payload = sql(f"select qr_payload from product_items where serial='{serials[0]}'")
-    check('QR payload carries business + shop + product + serial', re.match(r'^DQ1\|DEM\|S02\|D12\|\d{9,}$', payload) is not None, payload)
+    check('QR payload is a smart link with business + shop + product + serial', re.match(r'^https://.+\?dq=1\.DEM\.S02\.D12\.\d{9,}$', payload) is not None, payload)
     pg.context.close()
 
     # ================================================================== 4. cashier: scan & sell
@@ -250,8 +250,10 @@ with sync_playwright() as p:
     pg = new_page(browser)
     login(pg, 'owner@demo.test')
     goto(pg, 'orders')
-    pg.evaluate("editSupplier()"); pg.fill('#spN', 'Kariakoo Electronics'); pg.fill('#spP', '0713000111'); pg.fill('#spD', '14'); pg.click('#supForm button.primary'); pg.wait_for_timeout(800)
-    check('supplier created', sql("select payment_terms_days from suppliers where name='Kariakoo Electronics'") == '14')
+    pg.evaluate("editSupplier()"); pg.wait_for_selector('#supForm'); pg.fill('#spN', 'Kariakoo Electronics'); pg.fill('#spP', '0713000111'); pg.fill('#spD', '14'); pg.click('#supForm button.primary')
+    try: pg.wait_for_selector('#supForm', state='detached', timeout=8000)
+    except Exception: pass
+    check('supplier created', sql("select payment_terms_days from suppliers where name='Kariakoo Electronics'") == '14', (pg.inner_text('#modal')[:300] if pg.is_visible('#modal') else 'no modal', toast_text(pg)))
     pg.evaluate("openOrderEditor()"); pg.wait_for_selector('#poForm')
     pg.select_option('#poSup', label='Kariakoo Electronics')
     pg.fill('#pol_p_0', 'HP12'); pg.dispatch_event('#pol_p_0', 'change'); pg.wait_for_timeout(300)

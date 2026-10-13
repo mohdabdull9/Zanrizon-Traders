@@ -30,6 +30,8 @@ const Scanner = (() => {
     const t = clean(raw), u = t.toUpperCase();
     let m = u.match(/^DQ1([^A-Z0-9])([A-Z0-9]+)\1(S\d+)\1(.*)\1(\d{9,})$/);
     if (m) return { type: 'qr', biz: m[2], shop: m[3], product: m[4], serial: m[5], sep: m[1], text: t, normalized: `DQ1|${m[2]}|${m[3]}|${m[4]}|${m[5]}` };
+    m = u.match(/DQ[^A-Z0-9]1[^A-Z0-9]([A-Z0-9]+)[^A-Z0-9](S\d+)?.*?(\d{9,})[^0-9]*$/);
+    if (m && /^HTTPS?[^A-Z0-9]/.test(u)) return { type: 'qr', biz: m[1], shop: m[2], serial: m[3], text: t, normalized: t, link: true };
     m = u.match(/^DQ1[^A-Z0-9]+([A-Z0-9]+)[^A-Z0-9].*?(\d{9,})[^0-9]*$/);
     if (m) return { type: 'qr', biz: m[1], serial: m[2], text: t, normalized: t };
     if (/^\d{9,}$/.test(u)) return { type: 'serial', serial: u, text: t };

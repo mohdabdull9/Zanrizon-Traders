@@ -190,7 +190,7 @@ function selectShops(id, selected, opts = {}) {
 function productOptions(listId) { return `<datalist id="${listId}">${cache.products.filter(p => p.active !== false).map(p => `<option value="${esc(p.code)}">${esc(p.name)}</option>`).join('')}</datalist>`; }
 
 /* ---------------- modal + drawer ---------------- */
-function modal(html, size = '') { const m = document.getElementById('modal'); m.innerHTML = `<div class="modal ${size}" role="dialog" aria-modal="true">${html}</div>`; m.classList.remove('hidden'); renderBarcodes(); setTimeout(() => m.querySelector('[autofocus]')?.focus(), 30); }
+function modal(html, size = '') { const m = document.getElementById('modal'); m.innerHTML = `<div class="modal ${size}" role="dialog" aria-modal="true">${html}</div>`; m.classList.remove('hidden'); renderBarcodes(); setTimeout(() => { if (!m.contains(document.activeElement)) m.querySelector('[autofocus]')?.focus(); }, 30); }
 function closeModal() {
   const m = document.getElementById('modal'); m.classList.add('hidden'); m.innerHTML = '';
   if (window.Scanner) Scanner.stopCamera();
@@ -258,6 +258,7 @@ async function loadAllData() {
   stockRows.forEach(r => { const p = cache.products.find(x => x.id === r.product_id); if (p) { cache.stock[r.shop_id] = cache.stock[r.shop_id] || {}; cache.stock[r.shop_id][p.code] = Number(r.qty); } });
   myShift = cache.shifts.find(s => s.status === 'open' && s.member_id === me.id) || null;
   if (typeof repKey !== 'undefined') repKey = '';
+  cache.online = null; cache.onlineItems = []; if (typeof insights !== 'undefined') insights = null;
   await loadDeepQr();
 }
 async function loadDeepQr() {
@@ -287,6 +288,8 @@ async function boot() {
     const { data: { session: s } } = await sb.auth.getSession();
     session = s;
     await loadRef();
+    const pr = readPublicRoute(); if (pr) { pub = pr; view = pr.view; viewParams = pr.params; }
+    const inv = new URLSearchParams(location.search).get('supplier_invite'); if (inv && !session) { authMode = 'supplier'; window.__supInvite = inv.toUpperCase(); }
     if (session) await loadMember(); else render();
   } catch (e) {
     document.getElementById('root').innerHTML = `<div class="lockScreen"><div class="bigIco">${icon('alert')}</div><h2>Can't reach DeepQr</h2><p class="muted">${esc(errMsg(e))}</p><button class="btn primary" onclick="location.reload()">Try again</button></div>`;
@@ -294,13 +297,18 @@ async function boot() {
 }
 async function loadMember() {
   const v = await sb.rpc('dq_version');
-  dbReady = !v.error && Number(v.data) >= 3;
-  const { data: adm } = await sb.rpc('dq_is_platform_admin'); isAdmin = adm === true;
+  dbReady = !v.error && Number(v.data) >= 4;
   if (!dbReady) { me = null; view = 'needsUpdate'; render(); return; }
+  const who = await rpc('dq_whoami') || {};
+  isAdmin = !!who.admin; adminRole = who.admin?.role || null;
+  supplierAcc = who.supplier || null; customerAcc = who.customer || null;
   const st = await rpc('dq_my_status');
   if (!st?.member) {
     me = null;
+    if (pub) { if (customerAcc) { const { data: acc } = await sb.from('customer_accounts').select('*').eq('auth_user_id', session.user.id).maybeSingle(); if (acc) Object.assign(customerAcc, acc); } render(); return; }
     if (isAdmin) { view = 'portal'; await loadAdmin(); render(); return; }
+    if (supplierAcc) { await loadSupplier(); const h = (location.hash || '').replace('#', ''); view = h.startsWith('sup_') && PAGES[h] ? h : 'sup_home'; render(); return; }
+    if (customerAcc) { const { data: acc } = await sb.from('customer_accounts').select('*').eq('auth_user_id', session.user.id).maybeSingle(); if (acc) Object.assign(customerAcc, acc); pub = { view: 'c_home', params: {} }; view = 'c_home'; viewParams = {}; render(); return; }
     view = 'register'; render(); return;
   }
   if (st.member.blocked || !st.member.active) {
@@ -313,6 +321,8 @@ async function loadMember() {
   business = b;
   await loadAllData();
   sb.from('members').update({ last_seen: new Date().toISOString() }).eq('id', me.id).then(() => {});
+  onlineWatch();
+  if (pub) { render(); return; }
   const fromHash = (location.hash || '').replace('#', '');
   view = (fromHash && PAGES[fromHash] && pageAllowed(fromHash)) ? fromHash : (me.role === 'cashier' ? 'pos' : 'dashboard');
   render();
@@ -323,7 +333,8 @@ async function loginSubmit(e) {
   const err = document.getElementById('loginErr'); err.textContent = '';
   try {
     let email = idf;
-    if (!idf.includes('@')) {
+    if (looksLikePhone(idf)) email = shopperEmail(idf);
+    else if (!idf.includes('@')) {
       const r = await sb.rpc('dq_login_email', { p_username: idf.toLowerCase() });
       email = r.error ? (await sb.from('username_directory').select('email').eq('username', idf.toLowerCase()).maybeSingle()).data?.email : r.data;
       if (!email) { err.textContent = 'No account found with that username.'; return; }
@@ -383,7 +394,8 @@ async function adminClaimSubmit(e) {
     await loadMember();
   } finally { busy = false; }
 }
-async function logout() { if (window.Scanner) Scanner.stopCamera(); await sb.auth.signOut(); session = null; me = null; business = null; isAdmin = false; adminData = null; if (window.posState) posState.cart = []; view = 'login'; authMode = 'login'; location.hash = ''; render(); }
+async function logout() { if (window.Scanner) Scanner.stopCamera(); await sb.auth.signOut(); session = null; me = null; business = null; isAdmin = false; adminData = null; supplierAcc = null; customerAcc = null; adminRole = null; supData = null; cHomeData = null; clearInterval(ooTimer);
+  if (pub && pub.view !== 'c_home') { render(); return; } pub = null; try { history.replaceState(null, '', location.pathname); } catch (e) {} if (window.posState) posState.cart = []; view = 'login'; authMode = 'login'; location.hash = ''; render(); }
 async function toggleTheme() {
   const next = (document.documentElement.getAttribute('data-theme') || 'light') === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);
@@ -396,11 +408,12 @@ function render() {
   const root = document.getElementById('root');
   if (view === 'needsUpdate') { root.innerHTML = needsUpdateHtml(); return; }
   if (view === 'blocked') { root.innerHTML = blockedHtml(); return; }
-  if (!session || (!me && !isAdmin)) { root.innerHTML = authHtml(); bindAuth(); return; }
+  if (inPublic()) { if (pub) { view = pub.view; viewParams = viewParams && Object.keys(viewParams).length ? viewParams : pub.params; } else if (!PUBLIC_VIEWS.includes(view)) view = 'c_home'; root.innerHTML = publicLayout(); renderView(); return; }
+  if (!session || (!me && !isAdmin && !supplierAcc)) { root.innerHTML = authHtml(); bindAuth(); return; }
   root.innerHTML = layout(); applySidebarState(); renderView();
 }
 function needsUpdateHtml() {
-  return `<div class="lockScreen" style="padding-top:12vh">${logoMark(54)}<h2>DeepQr needs a database update</h2><p class="muted">This version of DeepQr needs the latest database update. The DeepQr admin should run <span class="mono">supabase/migrations/20261012120000_deepqr_v3.sql</span> (after the v2 file) in the Supabase SQL Editor, then reload this page.</p><div class="actions" style="justify-content:center"><button class="btn primary" onclick="location.reload()">Reload</button><button class="btn" onclick="logout()">Sign out</button></div></div>`;
+  return `<div class="lockScreen" style="padding-top:12vh">${logoMark(54)}<h2>DeepQr needs a database update</h2><p class="muted">This version of DeepQr needs the latest database update. The DeepQr admin should run <span class="mono">supabase/migrations/20261013120000_deepqr_v4.sql</span> (after the v2 and v3 files) in the Supabase SQL Editor, then reload this page.</p><div class="actions" style="justify-content:center"><button class="btn primary" onclick="location.reload()">Reload</button><button class="btn" onclick="logout()">Sign out</button></div></div>`;
 }
 function blockedHtml() {
   const st = window.__blocked || {};
@@ -408,64 +421,121 @@ function blockedHtml() {
   return `<div class="lockScreen" style="padding-top:12vh"><div class="bigIco">${icon('lock')}</div><h2>${platformBlock ? 'Your account is blocked by DeepQr' : 'Your account is disabled'}</h2><p class="muted">${platformBlock ? esc(st.member.blocked_reason || 'Contact DeepQr support for help.') : 'Ask the owner or a manager of ' + esc(st.business?.name || 'your business') + ' to enable your account.'}</p><button class="btn" onclick="logout()">${icon('logout')}Sign out</button></div>`;
 }
 function authHtml() {
-  const mode = view === 'register' ? 'register' : authMode;
+  const mode = view === 'register' && !['supplier', 'customer'].includes(authMode) ? 'register' : authMode;
   const refFromUrl = new URLSearchParams(location.search).get('ref') || '';
+  const heroes = {
+    supplier: ['Sell to shops, <span>without the paperwork.</span>', 'Receive purchase orders from businesses on DeepQr, confirm what you can supply, dispatch with your invoice and see every payment they record — confirmed by you.', [['truck', 'Orders arrive instantly', 'From every business you supply'], ['tag', 'Your price list', 'Matched to their products'], ['coins', 'Verified payments', 'You confirm each payment'], ['shield', 'Verified badge', 'Stand out in the directory']]],
+    customer: ['Shop near you, <span>earn every time.</span>', 'Order from DeepQr shops on your phone, collect at the shop or get it delivered, and collect points you can spend next time.', [['store', 'Local shops', 'Real stock, real prices'], ['truck', 'Pickup or delivery', 'You choose'], ['gift', 'Points & rewards', 'At every shop you visit'], ['qr', 'Genuine products', 'Scan any DeepQr label to check it']]],
+    def: ['Every item, <span>one smart QR.</span>', 'DeepQr gives every physical item its own secure QR code. One scan identifies the product and the shop, and records the sale.', [['qr', 'Unique item QR codes', 'Scan with any phone to verify'], ['cart', 'Scan, cart, receipt', 'Split payments, credit and loyalty'], ['truck', 'Suppliers & orders', 'Order, receive, pay — verified'], ['spark', 'Smart suggestions', 'Learns from your own sales']]]
+  };
+  const h = heroes[mode] || heroes.def;
   const hero = `<div class="authHero"><div class="heroBrand">${logoMark(46)}${wordmark()}</div>
-   <div class="heroMain"><h1>Every item, <span>one smart QR.</span></h1><p>DeepQr gives every physical item its own secure QR code. One scan identifies the product and the shop, and records the sale.</p>
-   <div class="heroFeatures">
-    <div class="heroFeature">${icon('qr')}<div><b>Unique item QR codes</b><small>Serials with shop &amp; product identity</small></div></div>
-    <div class="heroFeature">${icon('cart')}<div><b>Scan, cart, receipt</b><small>Split payments, credit and loyalty</small></div></div>
-    <div class="heroFeature">${icon('truck')}<div><b>Orders &amp; suppliers</b><small>Invoices, deliveries and payments</small></div></div>
-    <div class="heroFeature">${icon('chart')}<div><b>Reports that add up</b><small>Profit, cash-up, debts and stock value</small></div></div>
-   </div></div><div class="heroFoot">© ${new Date().getFullYear()} DeepQr · Built for retail across Tanzania &amp; East Africa</div></div>`;
-  const tabs = `<div class="tabs"><button class="${mode === 'login' ? 'active' : ''}" data-mode="login">Sign in</button><button class="${mode === 'register' ? 'active' : ''}" data-mode="register">Register business</button><button class="${mode === 'admin' ? 'active' : ''}" data-mode="admin">Platform owner</button></div>`;
+   <div class="heroMain"><h1>${h[0]}</h1><p>${h[1]}</p>
+   <div class="heroFeatures">${h[2].map(f => `<div class="heroFeature">${icon(f[0])}<div><b>${f[1]}</b><small>${f[2]}</small></div></div>`).join('')}</div>
+   <div class="heroLinks"><button onclick="goPublic('shops')">${icon('store')} Shop online</button><button onclick="goPublic('verify',{code:''})">${icon('qr')} Check a label</button></div></div><div class="heroFoot">© ${new Date().getFullYear()} DeepQr · Built for retail across Tanzania &amp; East Africa</div></div>`;
+  const tabs = `<div class="tabs tabs4"><button class="${mode === 'login' ? 'active' : ''}" data-mode="login">Sign in</button><button class="${mode === 'register' ? 'active' : ''}" data-mode="register">Business</button><button class="${mode === 'supplier' ? 'active' : ''}" data-mode="supplier">Supplier</button><button class="${mode === 'customer' ? 'active' : ''}" data-mode="customer">Shopper</button></div>`;
+  const pw = session ? '' : `<div class="formGrid"><div class="field"><label for="rp">Password</label><input id="rp" type="password" required minlength="6" autocomplete="new-password"></div><div class="field"><label for="rp2">Confirm</label><input id="rp2" type="password" required minlength="6" autocomplete="new-password"></div></div>`;
   let form = '';
-  if (mode === 'login') form = `<form id="loginForm" class="stack"><div><h2>Welcome back</h2><p class="muted">Owners sign in with email. Staff use the username their manager created.</p></div>
-    <div class="field"><label for="lu">Username or email</label><input id="lu" required autocomplete="username"></div>
+  if (mode === 'login') form = `<form id="loginForm" class="stack"><div><h2>Welcome back</h2><p class="muted">Business owners and suppliers: email. Staff: username. Shoppers: phone number.</p></div>
+    <div class="field"><label for="lu">Email, username or phone</label><input id="lu" required autocomplete="username"></div>
     <div class="field"><label for="lp">Password</label><input id="lp" type="password" required autocomplete="current-password"></div>
-    <div id="loginErr" class="bad" style="min-height:20px"></div><button class="btn primary lg wide">Sign in</button></form>`;
-  else if (mode === 'register') form = `<form id="registerForm" class="stack"><div><h2>Start with DeepQr</h2><p class="muted">Create your business workspace. You'll be the owner and can add shops and staff after.</p></div>
+    <div id="loginErr" class="bad" style="min-height:20px"></div><button class="btn primary lg wide">Sign in</button>
+    <p class="muted" style="font-size:12.5px;text-align:center;margin:4px 0 0">DeepQr team? <button type="button" class="priceBtn" data-mode="admin">Open the platform portal</button></p></form>`;
+  else if (mode === 'register') form = `<form id="registerForm" class="stack"><div><h2>Register your business</h2><p class="muted">Create your workspace. You'll be the owner and can add shops and staff after.</p></div>
     <div class="field"><label for="rb">Business name</label><input id="rb" required placeholder="e.g. Zanrizon Traders"></div>
     <div class="field"><label for="rn">Your full name</label><input id="rn" required></div>
-    ${session ? '' : `<div class="field"><label for="re">Email</label><input id="re" type="email" required></div><div class="formGrid"><div class="field"><label for="rp">Password</label><input id="rp" type="password" required minlength="6"></div><div class="field"><label for="rp2">Confirm</label><input id="rp2" type="password" required minlength="6"></div></div>`}
+    ${session ? '' : `<div class="field"><label for="re">Email</label><input id="re" type="email" required></div>${pw}`}
     <div class="field"><label>What does your business sell? <span class="muted">(choose one or more)</span></label>${groupCardsHtml([], 'rg')}</div>
     <div class="field"><label for="rref">Referral code <span class="muted">(optional)</span></label><input id="rref" class="mono" value="${esc(refFromUrl)}" placeholder="From another DeepQr business"></div>
     <div id="regErr" class="bad" style="min-height:20px"></div><button class="btn primary lg wide">Create my business</button>${session ? `<button type="button" class="btn ghost wide" onclick="logout()">Use a different account</button>` : ''}</form>`;
-  else form = `<form id="adminForm" class="stack"><div><h2>Platform owner portal</h2><p class="muted">Sign in with the DeepQr owner account. First time? Enter your one-time activation code.</p></div>
-    <div class="field"><label for="ae">Owner email</label><input id="ae" type="email" required autocomplete="username"></div>
+  else if (mode === 'supplier') form = `<form id="supRegForm" class="stack"><div><h2>Join as a supplier</h2><p class="muted">Free. Businesses on DeepQr find you, order from you and pay you — all tracked.</p></div>
+    ${window.__supInvite ? `<div class="banner ok">${icon('gift')}<div><b>You were invited by a business</b><p>Their orders will appear in your portal as soon as you join.</p></div></div>` : ''}
+    <div class="field"><label for="sr1">Company name</label><input id="sr1" required></div>
+    <div class="formGrid"><div class="field"><label for="sr2">Contact person</label><input id="sr2" required></div><div class="field"><label for="sr3">Phone</label><input id="sr3" type="tel" required placeholder="07XX XXX XXX"></div></div>
+    ${session ? '' : `<div class="field"><label for="re">Email (for signing in)</label><input id="re" type="email" required></div>${pw}`}
+    <div class="formGrid"><div class="field"><label for="sr4">Region / city</label><input id="sr4" placeholder="e.g. Dar es Salaam"></div><div class="field"><label for="sr5">TIN <span class="muted">(optional)</span></label><input id="sr5"></div></div>
+    <div class="field"><label>What do you supply?</label>${groupCardsHtml([], 'srg')}</div>
+    <div class="field"><label for="sr6">Invite code <span class="muted">(optional)</span></label><input id="sr6" class="mono" value="${esc(window.__supInvite || '')}"></div>
+    <div id="supErr" class="bad" style="min-height:20px"></div><button class="btn primary lg wide">${icon('truck')} Create supplier account</button>${session ? `<button type="button" class="btn ghost wide" onclick="logout()">Use a different account</button>` : ''}</form>`;
+  else if (mode === 'customer') form = `<form id="custRegForm" class="stack"><div><h2>Create a shopper account</h2><p class="muted">Order from DeepQr shops and collect points. You sign in with your phone number.</p></div>
+    <div class="field"><label for="cr1">Your name</label><input id="cr1" required autocomplete="name"></div>
+    <div class="field"><label for="cr2">Mobile number</label><input id="cr2" type="tel" required placeholder="07XX XXX XXX" autocomplete="tel"></div>
+    ${session ? '' : pw}
+    <div class="field"><label for="cr3">Area <span class="muted">(optional)</span></label><input id="cr3" placeholder="e.g. Kariakoo, Dar es Salaam"></div>
+    <div id="custErr" class="bad" style="min-height:20px"></div><button class="btn primary lg wide">${icon('gift')} Create account &amp; start shopping</button></form>`;
+  else form = `<form id="adminForm" class="stack"><div><h2>DeepQr platform portal</h2><p class="muted">For the platform owner and DeepQr team members. First time? Enter the one-time code you were given.</p></div>
+    <div class="field"><label for="ae">Email</label><input id="ae" type="email" required autocomplete="username"></div>
     <div class="field"><label for="ap">Password</label><input id="ap" type="password" required minlength="6" autocomplete="current-password"></div>
     <div class="field"><label for="ac">Activation code <span class="muted">(first time only)</span></label><input id="ac" class="mono" placeholder="XXXX-XXXX-XXXX"></div>
-    <div id="admErr" class="bad" style="min-height:20px"></div><button class="btn primary lg wide">${icon('shield')} Open portal</button></form>`;
-  return `<div class="auth">${hero}<div class="authBox"><div class="panel"><div class="panelBrand">${logoMark(38)}${wordmark()}</div>${tabs}${form}</div></div></div>`;
+    <div id="admErr" class="bad" style="min-height:20px"></div><button class="btn primary lg wide">${icon('shield')} Open portal</button>
+    <p class="muted" style="font-size:12.5px;text-align:center;margin:4px 0 0"><button type="button" class="priceBtn" data-mode="login">Back to sign in</button></p></form>`;
+  return `<div class="auth">${hero}<div class="authBox"><div class="panel"><div class="panelBrand">${logoMark(38)}${wordmark()}</div>${mode === 'admin' ? '' : tabs}${form}</div></div></div>`;
 }
 function bindAuth() {
   document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { authMode = b.dataset.mode; view = authMode === 'register' ? 'register' : 'login'; render(); }));
   const lf = document.getElementById('loginForm'); if (lf) lf.addEventListener('submit', loginSubmit);
   const rf = document.getElementById('registerForm'); if (rf) rf.addEventListener('submit', registerSubmit);
   const af = document.getElementById('adminForm'); if (af) af.addEventListener('submit', adminClaimSubmit);
+  const sf = document.getElementById('supRegForm'); if (sf) sf.addEventListener('submit', supplierRegisterSubmit);
+  const cf = document.getElementById('custRegForm'); if (cf) cf.addEventListener('submit', customerRegisterSubmit);
+}
+async function signUpIfNeeded(email, errEl) {
+  if (session) return true;
+  const pass = document.getElementById('rp').value, pass2 = document.getElementById('rp2').value;
+  if (pass !== pass2) { errEl.textContent = 'Passwords do not match.'; return false; }
+  if (pass.length < 6) { errEl.textContent = 'Password must be at least 6 characters.'; return false; }
+  const { data, error } = await sb.auth.signUp({ email, password: pass });
+  if (error) { errEl.textContent = /registered/i.test(error.message) ? 'This login already exists — sign in instead.' : error.message; return false; }
+  if (!data.session) { const r = await sb.auth.signInWithPassword({ email, password: pass }); if (r.error) { toast('Check your email to confirm your account, then sign in.'); authMode = 'login'; view = 'login'; render(); return false; } }
+  const { data: { session: s } } = await sb.auth.getSession(); session = s; return true;
+}
+async function supplierRegisterSubmit(e) {
+  e.preventDefault(); if (busy) return; busy = true;
+  const err = document.getElementById('supErr'); err.textContent = '';
+  try {
+    const groups = checkedValues('srg');
+    if (!groups.length) { err.textContent = 'Choose at least one group you supply.'; return; }
+    if (!(await signUpIfNeeded(document.getElementById('re')?.value.trim(), err))) return;
+    await rpc('dq_supplier_register', { p: { company_name: document.getElementById('sr1').value, contact_person: document.getElementById('sr2').value, phone: document.getElementById('sr3').value, region: document.getElementById('sr4').value, tin: document.getElementById('sr5').value, groups, invite_code: document.getElementById('sr6').value } });
+    window.__supInvite = null; try { history.replaceState(null, '', location.pathname); } catch (x) {}
+    toast('Welcome to DeepQr! Add your price list so businesses can order.', 'ok');
+    await loadMember(); if (supplierAcc) go('sup_products');
+  } catch (x) { err.textContent = errMsg(x); } finally { busy = false; }
+}
+async function customerRegisterSubmit(e) {
+  e.preventDefault(); if (busy) return; busy = true;
+  const err = document.getElementById('custErr'); err.textContent = '';
+  try {
+    const phone = document.getElementById('cr2').value;
+    if (String(phone).replace(/\D/g, '').length < 9) { err.textContent = 'Enter your full mobile number.'; return; }
+    if (!(await signUpIfNeeded(shopperEmail(phone), err))) return;
+    await rpc('dq_customer_register', { p: { name: document.getElementById('cr1').value, phone, area: document.getElementById('cr3').value } });
+    toast('Karibu! Find a shop and place your first order.', 'ok');
+    pub = { view: 'shops', params: {} }; await loadMember();
+  } catch (x) { err.textContent = errMsg(x); } finally { busy = false; }
 }
 
 /* ---------------- navigation ---------------- */
 function navGroups() {
-  if (!me) return [['Platform', [['portal', 'Owner portal', 'shield']]]];
+  if (!me) { if (supplierAcc) return supNav(); return portalSections().map(([gname, items]) => [gname, items.map(t => ['portal:' + t[0], t[1], t[2]])]); }
   const r = me.role; const g = [];
   if (r === 'cashier') {
-    g.push(['Sell', [['pos', 'Scan & Sell', 'scan'], ['sales', 'Sales', 'receipt'], ['customers', 'Customers', 'users']]]);
+    g.push(['Sell', [['pos', 'Scan & Sell', 'scan'], ['online', 'Online orders', 'phone'], ['sales', 'Sales', 'receipt'], ['customers', 'Customers', 'users']]]);
     g.push(['Stock', [['inventory', 'My stock', 'layers'], ['expiry', 'Expiry', 'clock'], ['transfers', 'Transfers', 'transfer'], ['orders', 'Deliveries', 'truck']]]);
     if (perms.can_view_reports) g.push(['Insights', [['reports', 'Reports', 'chart']]]);
   } else if (isStoreOp()) {
-    g.push(['Overview', [['dashboard', 'Dashboard', 'dashboard']]]);
+    g.push(['Overview', [['dashboard', 'Dashboard', 'dashboard'], ['insights', 'Smart suggestions', 'spark']]]);
     g.push(['Stock', [['products', 'Products', 'box'], ['catalog', 'Product catalogue', 'spark'], ['qr', 'QR Codes', 'qr'], ['inventory', 'Inventory', 'layers'], ['expiry', 'Expiry', 'clock'], ['transfers', 'Transfers', 'transfer'], ['orders', 'Purchase orders', 'truck']]]);
     if (perms.can_view_reports) g.push(['Insights', [['reports', 'Reports', 'chart']]]);
   } else {
-    g.push(['Sell', [['dashboard', 'Dashboard', 'dashboard'], ['pos', 'Scan & Sell', 'scan'], ['sales', 'Sales', 'receipt'], ['customers', 'Customers', 'users']]]);
+    g.push(['Sell', [['dashboard', 'Dashboard', 'dashboard'], ['insights', 'Smart suggestions', 'spark'], ['pos', 'Scan & Sell', 'scan'], ['online', 'Online orders', 'phone'], ['sales', 'Sales', 'receipt'], ['customers', 'Customers', 'users']]]);
     g.push(['Stock', [['products', 'Products', 'box'], ['catalog', 'Product catalogue', 'spark'], ['qr', 'QR Codes', 'qr'], ['inventory', 'Inventory', 'layers'], ['expiry', 'Expiry', 'clock'], ['transfers', 'Transfers', 'transfer'], ['orders', 'Purchase orders', 'truck']]]);
-    g.push(['Business', [['reports', 'Reports', 'chart'], ['expenses', 'Expenses', 'minus'], ['stores', 'Stores & shops', 'store'], ['users', 'Staff', 'user'], ['devices', 'Devices & scanners', 'phone'], ['wallet', 'QR Wallet', 'wallet'], ['settings', 'Settings', 'settings']]]);
+    g.push(['Business', [['reports', 'Reports', 'chart'], ['payments', 'Payments', 'coins'], ['expenses', 'Expenses', 'minus'], ['stores', 'Stores & shops', 'store'], ['users', 'Staff', 'user'], ['devices', 'Devices & scanners', 'phone'], ['wallet', 'QR Wallet', 'wallet'], ['settings', 'Settings', 'settings']]]);
   }
   if (isAdmin) g.push(['Platform', [['portal', 'Owner portal', 'shield']]]);
   return g;
 }
-function pageAllowed(v) { return navGroups().some(([, items]) => items.some(i => i[0] === v)) || ['inventoryReport', 'needsUpdate'].includes(v); }
+function pageAllowed(v) { return navGroups().some(([, items]) => items.some(i => i[0] === v || i[0].startsWith(v + ':'))) || ['inventoryReport', 'needsUpdate'].includes(v); }
 function expiredCount() { return cache.items.filter(i => i.expiry_date && daysUntil(i.expiry_date) < 0).length; }
 function lowStockCount() { let n = 0; visibleStores().forEach(st => cache.products.forEach(p => { const qq = stock(st.id, p.code); if (qq <= threshold(p) && qq > 0) n++; })); return n; }
 function navBadge(k) {
@@ -477,16 +547,20 @@ function navBadge(k) {
   if (k === 'customers') return '';
   if (k === 'portal' && adminData) return b((adminData.topups || []).filter(t => t.status === 'pending').length, 'teal');
   if (k === 'pos' && cache.held.length) return b(cache.held.length, 'teal');
+  if (k === 'online') return b((cache.online || []).filter(o => o.status === 'placed').length || ooSeen || 0);
+  if (k === 'payments') return b((cache.online || []).filter(o => o.payment_status === 'pending_verification' && !['cancelled', 'rejected'].includes(o.status)).length, 'teal');
+  if (k.startsWith('portal:') && adminData) return b(portalCount(k.slice(7)) || 0, 'teal');
   return '';
 }
 function layout() {
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
   const bizCard = me ? `<div class="sideBiz"><b>${esc(business.name)}</b><small>${esc(roleName(me.role))}${me.shop_id ? ' · ' + esc(shopObj(me.shop_id)?.name || '') : ''}</small><br><span class="code">ID ${esc(business.code || '—')}</span></div>`
-    : `<div class="sideBiz"><b>DeepQr Platform</b><small>Platform owner</small></div>`;
+    : supplierAcc ? `<div class="sideBiz"><b>${esc(supplierAcc.company_name)}</b><small>Supplier${supplierAcc.verified ? ' · ✔ verified' : ''}</small><br><span class="code">${esc(supplierAcc.code || '')}</span></div>`
+    : `<div class="sideBiz"><b>DeepQr Platform</b><small>${esc({ owner: 'Platform owner', admin: 'Administrator', finance: 'Finance', support: 'Support', catalog: 'Catalogue' }[adminRole] || 'Team')}</small></div>`;
   const lowBal = me && wallet && Number(wallet.balance || 0) + Number(wallet.bonus_balance || 0) < Number(wallet.low_balance_threshold || 500);
   return `<div class="app"><div class="sideOverlay" id="sideOverlay" onclick="closeMobileSidebar()"></div>
   <aside class="side"><div class="sideBrand">${logoMark(36)}${wordmark()}</div>${bizCard}
-   <nav class="nav">${navGroups().map(([gname, items]) => `<div class="navSec">${gname}</div>` + items.map(x => `<button class="${view === x[0] ? 'active' : ''}" onclick="go('${x[0]}');closeMobileSidebar()" title="${esc(x[1])}">${icon(x[2])}<span>${x[1]}</span>${navBadge(x[0])}</button>`).join('')).join('')}</nav>
+   <nav class="nav">${navGroups().map(([gname, items]) => `<div class="navSec">${gname}</div>` + items.map(x => `<button class="${view === x[0] || (view === 'portal' && x[0] === 'portal:' + (viewParams.tab || 'overview')) ? 'active' : ''}" onclick="go('${x[0]}');closeMobileSidebar()" title="${esc(x[1])}">${icon(x[2])}<span>${x[1]}</span>${x[3] ? `<span class="badge ${x[0] === 'sup_payments' ? 'teal' : ''}">${x[3]}</span>` : navBadge(x[0])}</button>`).join('')).join('')}</nav>
    <div class="sideFoot nav"><button onclick="logout()">${icon('logout')}<span>Sign out</span></button></div></aside>
   <main class="main"><header class="top"><button class="iconBtn" onclick="toggleSidebar()" title="Menu" aria-label="Menu">${icon('menu')}</button>
    ${me ? `<div class="topSearch">${icon('search')}<input id="globalSearch" value="${esc(search)}" oninput="globalSearch(this.value)" placeholder="Search products, serials, receipts, customers…" aria-label="Search"></div>` : ''}
@@ -495,7 +569,7 @@ function layout() {
     ${me && wallet && isMgr() ? `<button class="chip ${lowBal ? 'warn' : 'teal'} hideSm" onclick="go('wallet')" title="QR wallet">${icon('wallet')}${money(Number(wallet.balance || 0) + Number(wallet.bonus_balance || 0), wallet.currency)}</button>` : ''}
     ${me && wallet?.status === 'suspended' ? `<span class="chip bad">Suspended</span>` : ''}
     <button class="iconBtn" onclick="toggleTheme()" title="Dark mode" aria-label="Toggle dark mode">${icon(dark ? 'sun' : 'moon')}</button>
-    ${me ? `<div class="who"><b>${esc(me.name)}</b><small>${esc(roleName(me.role))}</small></div>${me.avatar ? `<img class="avatar" src="${me.avatar}" alt="">` : `<div class="avatar">${esc((me.name || 'U').slice(0, 1).toUpperCase())}</div>`}` : `<div class="avatar">${icon('shield')}</div>`}
+    ${me ? `<div class="who"><b>${esc(me.name)}</b><small>${esc(roleName(me.role))}</small></div>${me.avatar ? `<img class="avatar" src="${me.avatar}" alt="">` : `<div class="avatar">${esc((me.name || 'U').slice(0, 1).toUpperCase())}</div>`}` : supplierAcc ? `<div class="who"><b>${esc(supplierAcc.contact_person || supplierAcc.company_name)}</b><small>Supplier</small></div><div class="avatar">${icon('truck')}</div>` : `<div class="avatar">${icon('shield')}</div>`}
    </div></header>
   <section class="content" id="content"></section></main></div>`;
 }
@@ -511,6 +585,9 @@ function applySidebarState() {
 }
 function closeMobileSidebar() { if (window.innerWidth <= 900) { mobileSidebarOpen = false; applySidebarState(); } }
 function go(v, params = {}) {
+  if (v.startsWith('portal:')) { params = { ...params, tab: v.slice(7) }; v = 'portal'; }
+  if (PUBLIC_VIEWS.includes(v)) { goPublic(v, params); return; }
+  if (pub) { pub = null; try { history.replaceState(null, '', location.pathname + '#' + v); } catch (e) {} }
   if (window.Scanner) { Scanner.stopCamera(); Scanner.popHandler(view); }
   if (modalOpen()) closeModal();
   closeDrawer();
@@ -537,7 +614,7 @@ function renderView() {
   const banners = [];
   if (me && wallet?.status === 'suspended') banners.push(`<div class="banner bad">${icon('lock')}<div><b>Account suspended by DeepQr</b><p>${esc(wallet.status_note || 'Sales and QR generation are paused. Contact DeepQr support.')}</p></div></div>`);
   const c = document.getElementById('content'); if (!c) return;
-  c.innerHTML = `<div class="pageHead"><div><h1>${page.title}</h1><p>${typeof page.sub === 'function' ? page.sub() : (page.sub || '')}</p></div><div class="actions noPrint">${actions}</div></div>${me ? announcementsHtml() : ''}${banners.join('')}<div id="pageBody">${page.render()}</div>`;
+  c.innerHTML = `<div class="pageHead ${page.noHead ? 'hidden' : ''}"><div><h1>${page.title}</h1><p>${typeof page.sub === 'function' ? page.sub() : (page.sub || '')}</p></div><div class="actions noPrint">${actions}</div></div>${me ? announcementsHtml() : ''}${banners.join('')}<div id="pageBody">${page.render()}</div>`;
   renderBarcodes();
   if (page.after) page.after();
 }
