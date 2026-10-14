@@ -352,6 +352,9 @@ class Handler(BaseHTTPRequestHandler):
             if not self.run(go): return self.reply(400, {'statusCode': '404', 'error': 'not_found', 'message': 'Object not found'})
             tok = b64url(json.dumps({'b': bucket, 'n': name}).encode())
             return self.reply(200, {'signedURL': f'/object/sign/{bucket}/{name}?token={tok}'})
+        if method == 'GET' and kind == 'public/':
+            f = FILES.get((bucket, name))
+            return self.reply(200, raw=f[0], ctype=f[1]) if f else self.reply(404, {'message': 'not found'})
         if method == 'GET' and kind == 'sign/':
             f = FILES.get((bucket, name))
             return self.reply(200, raw=f[0], ctype=f[1]) if f else self.reply(404, {'message': 'not found'})

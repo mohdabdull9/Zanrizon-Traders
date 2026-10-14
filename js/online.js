@@ -25,7 +25,7 @@ function onlineWatch() {
 function ooItems(id) { return (cache.onlineItems || []).filter(i => i.order_id === id); }
 PAGES.online = {
   title: 'Online orders', sub: () => business.store_enabled ? `Your shop is open at <button class="priceBtn" onclick="copyText('${jsq(location.origin + location.pathname + '?shop=' + business.store_slug)}','Shop link copied')">${esc(location.host + location.pathname)}?shop=${esc(business.store_slug)} ${icon('copy')}</button>` : 'Let customers order from their phones, then pick up or get it delivered',
-  actions: () => `${business.store_enabled ? `<button class="btn" onclick="goPublic('store',{slug:'${jsq(business.store_slug)}'})">${icon('eye')}View my shop</button>` : ''}${isMgr() ? `<button class="btn ${business.store_enabled ? '' : 'primary'}" onclick="openStoreSettings()">${icon('settings')}${business.store_enabled ? 'Shop settings' : 'Open my online shop'}</button>` : ''}`,
+  actions: () => `${business.store_enabled ? `<button class="btn" onclick="goPublic('store',{slug:'${jsq(business.store_slug)}'})">${icon('eye')}View my shop</button>` : ''}${isMgr() ? `<button class="btn ${business.store_enabled ? '' : 'primary'}" onclick="openStoreSettings()">${icon('settings')}${business.store_enabled ? 'Shop setup' : 'Open my online shop'}</button><button class="btn" onclick="go('shopprod')">${icon('tag')}Shop products</button>` : ''}`,
   render: () => {
     if (!cache.online) { loadOnlineOrders().then(() => view === 'online' && renderView()); return `<div class="card"><div class="empty"><span class="spinner"></span> Loading orders…</div></div>`; }
     if (Date.now() - (cache.onlineAt || 0) > 5000) { cache.onlineAt = Date.now(); const n0 = cache.online.filter(o => o.status === 'placed').length; loadOnlineOrders().then(() => { if (view !== 'online' || modalOpen()) return; if (cache.online.filter(o => o.status === 'placed').length !== n0) render(); else renderView(); }); }
@@ -34,7 +34,7 @@ PAGES.online = {
     const mine = cache.online.filter(o => me.role !== 'cashier' || !o.shop_id || o.shop_id === me.shop_id);
     const list = mine.filter(o => OO_TABS.find(t => t[0] === tab)[2].includes(o.status));
     const unver = mine.filter(o => o.payment_status === 'pending_verification' && !['cancelled', 'rejected'].includes(o.status));
-    return `<div class="grid g4">${kpi('cart', 'New orders', mine.filter(o => o.status === 'placed').length, 'accept or decline', mine.some(o => o.status === 'placed') ? 'warn' : '')}${kpi('clock', 'In progress', mine.filter(o => OO_TABS[1][2].includes(o.status)).length)}${kpi('shield', 'Payments to verify', unver.length, money(sum(unver, 'total')), unver.length ? 'warn' : 'teal')}${kpi('chart', 'Online sales (30 days)', money(sum(mine.filter(o => o.status === 'completed' && o.created_at >= addDays(-29)), 'total')), `${mine.filter(o => o.status === 'completed').length} completed`)}</div>
+    return `${storeHealthBanner()}<div class="grid g4">${kpi('cart', 'New orders', mine.filter(o => o.status === 'placed').length, 'accept or decline', mine.some(o => o.status === 'placed') ? 'warn' : '')}${kpi('clock', 'In progress', mine.filter(o => OO_TABS[1][2].includes(o.status)).length)}${kpi('shield', 'Payments to verify', unver.length, money(sum(unver, 'total')), unver.length ? 'warn' : 'teal')}${kpi('chart', 'Online sales (30 days)', money(sum(mine.filter(o => o.status === 'completed' && o.created_at >= addDays(-29)), 'total')), `${mine.filter(o => o.status === 'completed').length} completed`)}</div>
      <div style="margin-top:16px">${tabbar('ooTabs', OO_TABS.map(t => [t[0], t[1], t[0] === 'new' ? 'bolt' : t[0] === 'progress' ? 'clock' : t[0] === 'done' ? 'check' : 'x', mine.filter(o => t[2].includes(o.status)).length || '', t[0] === 'new']), tab, 'ooTab')}</div>
      <div class="ooGrid">${list.map(ooCard).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('cart', tab === 'new' ? 'No new orders' : 'Nothing here', tab === 'new' ? 'New orders appear here with a sound. Share your shop link so customers can order.' : '')}</div>`}</div>`;
   },
@@ -43,7 +43,7 @@ PAGES.online = {
 function ooTab(t) { setTab('tab', t); }
 function storeIntro() {
   return `<div class="card storeIntro"><div><h2>Sell online with DeepQr</h2><p class="muted">Your products, prices and live stock become a mobile shop. Customers order, choose pickup or delivery and pay at the shop or by mobile money — you verify the payment, prepare the goods and complete the sale at the till. Every completed order earns them loyalty points.</p>
-   <ol class="steps2"><li>Turn on the online shop and choose pickup and/or delivery.</li><li>Add your M-Pesa / Tigo Pesa / bank numbers for payments.</li><li>Share your shop link on WhatsApp, Instagram and your receipts.</li></ol>
+   <ol class="steps2"><li>Open the shop, put your branches on the map and choose pickup, delivery or both, with a delivery price per km.</li><li>Add prices and photos to the products you want to sell online.</li><li>Share your shop link on WhatsApp, Instagram and your receipts.</li></ol>
    ${isMgr() ? `<button class="btn primary lg" onclick="openStoreSettings()">${icon('store')}Open my online shop</button>` : '<p class="muted">Ask the owner or a manager to open the online shop.</p>'}</div><div class="phoneMock">${icon('store')}<b>${esc(business.name)}</b><small>Order online · Pickup · Delivery · Points</small></div></div>`;
 }
 function ooCard(o) {
@@ -52,7 +52,8 @@ function ooCard(o) {
   const next = { placed: ['accept', 'Accept order', 'check'], accepted: ['preparing', 'Start preparing', 'box'], preparing: o.fulfilment === 'delivery' ? ['out_for_delivery', 'Out for delivery', 'truck'] : ['ready', 'Ready for pickup', 'bell'], ready: null, out_for_delivery: null }[o.status];
   const open = !['completed', 'cancelled', 'rejected'].includes(o.status);
   return `<div class="card ooCard ${o.status === 'placed' ? 'hot' : ''}"><div class="cardHead" style="margin-bottom:6px"><div><h3><span class="mono">${esc(o.order_no)}</span> · ${esc(o.customer_name)}</h3><p>${o.status === 'placed' ? `<b class="warn">${age < 60 ? age + ' min ago' : ago(o.created_at)}</b>` : fmtDT(o.created_at)} · <a href="tel:${esc(o.customer_phone)}">${esc(o.customer_phone)}</a>${o.wanted_at ? ` · wants it: <b>${esc(o.wanted_at)}</b>` : ''}</p></div><div style="text-align:right"><b>${money(o.total)}</b><br><span class="tag ${o.fulfilment === 'delivery' ? 'info' : 'gray'}">${o.fulfilment === 'delivery' ? icon('truck') + 'Delivery' : icon('store') + 'Pickup'}</span></div></div>
-   ${o.fulfilment === 'delivery' ? `<p class="ooAddr">${icon('store')} ${esc(o.delivery_address || '')}</p>` : ''}
+   <div class="ooRoute"><span>${icon('store')}${esc(shopObj(o.shop_id)?.name || 'Shop')}${o.fulfilment === 'delivery' ? '' : ' · customer collects'}</span>${o.fulfilment === 'delivery' ? `<span>${icon('pin')}${esc(o.delivery_address || '')}${o.delivery_km != null ? ` · <b>about ${fmtKm(o.delivery_km)} km</b>` : ''}</span>` : ''}</div>
+   ${o.fulfilment === 'delivery' && o.delivery_lat != null ? `<div class="ooLinks"><a class="priceBtn" target="_blank" rel="noopener" href="${mapsLink(o.delivery_lat, o.delivery_lng)}">${icon('pin')}Directions</a><button class="priceBtn" onclick="copyText('${mapsLink(o.delivery_lat, o.delivery_lng)}','Location link copied — send it to the rider')">${icon('copy')}Send location to rider</button></div>` : ''}
    <div class="ooItems">${items.map(i => `<div><span>${num(i.qty)} × ${esc(i.name)}</span><b>${money(i.qty * i.price)}</b></div>`).join('')}${Number(o.delivery_fee) ? `<div><span>Delivery fee</span><b>${money(o.delivery_fee)}</b></div>` : ''}${o.points_redeem ? `<div class="ok"><span>${o.points_redeem} points used</span><b>− ${money(o.points_value)}</b></div>` : ''}</div>
    ${o.note ? `<p class="muted" style="font-size:13px;margin:8px 0 0">“${esc(o.note)}”</p>` : ''}
    <div class="ooPay"><span class="tag ${pay[1]}">${pay[0]}</span>${o.payment_method !== 'Pay on collection' ? `<span>${esc(o.payment_method)} · <b class="mono">${esc(o.payment_reference || '')}</b></span>` : ''}${o.payment_status === 'pending_verification' && open ? `<span class="actions" style="flex-wrap:nowrap"><button class="btn small success" onclick="ooAct('${o.id}','verify_payment',this)">${icon('check')}Payment received</button><button class="btn small ghost" onclick="ooAsk('${o.id}','reject_payment','Payment not found','Tell the customer what is wrong (e.g. no payment with this reference).')">Not found</button></span>` : ''}${o.payment_verified_by ? `<small class="muted">checked by ${esc(o.payment_verified_by)}</small>` : ''}</div>
@@ -95,32 +96,6 @@ function onlineAddUnscanned() {
   Object.entries(on.pending).forEach(([pid, q]) => { if (q > 0) { const p = productById(pid); const it = cache.onlineItems.find(i => i.order_id === on.id && i.product_id === pid); posState.cart.push({ product_id: p.id, code: p.code, name: p.name, price: Number(it?.price ?? p.price), base_price: Number(p.price), tax: Number(p.tax || 0), qty: q }); on.pending[pid] = 0; } });
   posSave(); renderView();
 }
-function openStoreSettings() {
-  const b = business, accts = (b.store_payment_accounts || []).length ? b.store_payment_accounts : (b.payment_methods || []).filter(m => !/cash|card|credit/i.test(m.name || m)).slice(0, 2).map(m => ({ method: m.name || m, number: '', name: b.name }));
-  window.__stAccts = JSON.parse(JSON.stringify(accts));
-  const drawAcc = () => window.__stAccts.map((a, i) => `<div class="searchLine" style="margin:0 0 6px"><input class="input" style="max-width:150px" value="${esc(a.method || '')}" placeholder="M-Pesa" oninput="__stAccts[${i}].method=this.value"><input class="input mono" value="${esc(a.number || '')}" placeholder="Number / Lipa namba" oninput="__stAccts[${i}].number=this.value"><input class="input" value="${esc(a.name || '')}" placeholder="Account name" oninput="__stAccts[${i}].name=this.value"><button type="button" class="btn ghost" onclick="__stAccts.splice(${i},1);document.getElementById('stAccs').innerHTML=window.__stDraw()">${icon('trash')}</button></div>`).join('');
-  window.__stDraw = drawAcc;
-  modal(`<form id="stF"><div class="cardHead"><div><h3>${icon('store')} Online shop settings</h3><p>Products marked “Show in online shop” with a price appear automatically with live stock.</p></div><button type="button" class="btn ghost" onclick="closeModal()">${icon('x')}</button></div>
-   <label class="chk switchRow"><input type="checkbox" id="stOn" ${b.store_enabled ? 'checked' : ''}><span><b>Shop is open for online orders</b><br><small class="muted">Customers can find you under “Shop online”.</small></span></label>
-   <div class="formGrid" style="margin-top:12px"><div class="field"><label>Shop link</label><div class="searchLine" style="margin:0"><span class="muted" style="align-self:center;font-size:12px">?shop=</span><input id="stSlug" class="mono" value="${esc(b.store_slug || b.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'))}"></div></div><div class="field"><label>Short description</label><input id="stTag" value="${esc(b.store_tagline || '')}" placeholder="e.g. Fresh groceries & household goods"></div>
-    <div class="field"><label>Orders are prepared at</label>${selectShops('stShop', b.store_shop_id || cache.shops.find(s => s.type === 'shop')?.id, { all: true })}</div><div class="field"><label>Area / town</label><input id="stArea" value="${esc(b.store_area || '')}" placeholder="e.g. Kariakoo, Dar es Salaam"></div><div class="field"><label>Opening hours</label><input id="stHrs" value="${esc(b.store_hours || '')}" placeholder="Mon–Sat 8:00–20:00"></div><div class="field"><label>Minimum order</label><input id="stMin" type="number" min="0" value="${Number(b.store_min_order || 0)}"></div></div>
-   <h3 style="margin:16px 0 8px">Getting the goods</h3><div class="grid g2"><label class="chk"><input type="checkbox" id="stPick" ${b.store_pickup !== false ? 'checked' : ''}>Customers collect at the shop</label><label class="chk"><input type="checkbox" id="stDel" ${b.store_delivery ? 'checked' : ''}>We deliver</label></div>
-   <div class="formGrid" style="margin-top:8px"><div class="field"><label>Delivery fee</label><input id="stFee" type="number" min="0" value="${Number(b.store_delivery_fee || 0)}"></div><div class="field"><label>Free delivery above</label><input id="stFree" type="number" min="0" value="${b.store_free_delivery_over ?? ''}" placeholder="optional"></div></div>
-   <h3 style="margin:16px 0 8px">Payments</h3><label class="chk"><input type="checkbox" id="stPoc" ${b.store_pay_on_collection !== false ? 'checked' : ''}>Allow “pay at the shop / on delivery”</label>
-   <p class="muted" style="font-size:12.5px;margin:6px 0">Mobile-money / bank numbers customers pay to. Every payment comes with its transaction reference; you confirm it on your statement before handing over the goods (a reference can only be used once).</p><div id="stAccs">${drawAcc()}</div><button type="button" class="btn small" onclick="__stAccts.push({method:'M-Pesa',number:'',name:''});document.getElementById('stAccs').innerHTML=window.__stDraw()">${icon('plus')}Add number</button>
-   ${b.loyalty_enabled ? `<div class="field" style="margin-top:12px;max-width:320px"><label>Bonus points on a customer's first online order</label><input id="stFop" type="number" min="0" value="${Number(b.first_order_points || 0)}"></div>` : `<p class="muted" style="font-size:12.5px;margin-top:12px">${icon('gift')} Turn on loyalty points in Settings to reward online customers.</p>`}
-   <div id="stErr" class="bad" style="min-height:20px;margin-top:8px"></div><div class="actions"><button class="btn primary lg">${icon('check')}Save shop</button></div></form>`, 'wide');
-  document.getElementById('stF').onsubmit = async e => {
-    e.preventDefault(); const v = x => document.getElementById(x)?.value, c = x => document.getElementById(x)?.checked;
-    await withBusy(e.submitter, async () => {
-      try {
-        const r = await rpc('dq_store_settings', { p: { store_enabled: c('stOn'), store_slug: v('stSlug'), store_tagline: v('stTag'), store_shop_id: v('stShop'), store_area: v('stArea'), store_hours: v('stHrs'), store_min_order: Number(v('stMin') || 0), store_pickup: c('stPick'), store_delivery: c('stDel'), store_delivery_fee: Number(v('stFee') || 0), store_free_delivery_over: v('stFree'), store_pay_on_collection: c('stPoc'), store_payment_accounts: window.__stAccts.filter(a => (a.number || '').trim()), first_order_points: Number(v('stFop') || business.first_order_points || 0) } });
-        business = { ...business, ...r }; closeModal(); toast(business.store_enabled ? 'Your online shop is open' : 'Online shop saved (closed)', 'ok'); onlineWatch(); render();
-      } catch (x) { document.getElementById('stErr').textContent = errMsg(x); }
-    });
-  };
-}
-
 /* ---------------- payments centre ---------------- */
 PAGES.payments = {
   title: 'Payments', sub: 'Every shilling in and out, with verification on both sides',
@@ -222,7 +197,8 @@ function gettingStarted() {
     ['Test your scanner', lsGet('dq_scan_tested') === '1' || Scanner.log.length > 0, "go('devices',{tab:'test'})", 'scan'],
     ['Make your first sale', cache.sales.length > 0, "go('pos')", 'cart'],
     ['Add a cashier', cache.members.length > 1, "go('users')", 'users'],
-    ['Open your online shop', !!business.store_enabled, "go('online')", 'phone']
+    ['Open your online shop', !!business.store_enabled, "go('shopsetup')", 'phone'],
+    ['Add prices & photos for online customers', business.store_enabled && storeStats().sellable > 0 && storeStats().noPhoto < storeStats().shown, "go('shopprod')", 'camera']
   ];
   const done = steps.filter(s => s[1]).length; if (done === steps.length) return '';
   const nextI = steps.findIndex(s => !s[1]);
