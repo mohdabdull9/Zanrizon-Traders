@@ -104,6 +104,9 @@ async function withBusy(btn, fn) {
 
 /* ---------------- icons ---------------- */
 const ICONS = {
+  pin: '<path d="M12 21s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12z"/><circle cx="12" cy="9" r="2.5"/>',
+  star: '<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
   dashboard: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
   scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/>',
   box: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
@@ -297,7 +300,7 @@ async function boot() {
 }
 async function loadMember() {
   const v = await sb.rpc('dq_version');
-  dbReady = !v.error && Number(v.data) >= 4;
+  dbReady = !v.error && Number(v.data) >= 5;
   if (!dbReady) { me = null; view = 'needsUpdate'; render(); return; }
   const who = await rpc('dq_whoami') || {};
   isAdmin = !!who.admin; adminRole = who.admin?.role || null;
@@ -413,7 +416,7 @@ function render() {
   root.innerHTML = layout(); applySidebarState(); renderView();
 }
 function needsUpdateHtml() {
-  return `<div class="lockScreen" style="padding-top:12vh">${logoMark(54)}<h2>DeepQr needs a database update</h2><p class="muted">This version of DeepQr needs the latest database update. The DeepQr admin should run <span class="mono">supabase/migrations/20261013120000_deepqr_v4.sql</span> (after the v2 and v3 files) in the Supabase SQL Editor, then reload this page.</p><div class="actions" style="justify-content:center"><button class="btn primary" onclick="location.reload()">Reload</button><button class="btn" onclick="logout()">Sign out</button></div></div>`;
+  return `<div class="lockScreen" style="padding-top:12vh">${logoMark(54)}<h2>DeepQr needs a database update</h2><p class="muted">This version of DeepQr needs the latest database update. The DeepQr admin should run <span class="mono">supabase/migrations/20261014120000_deepqr_v5.sql</span> (after the v2, v3 and v4 files) in the Supabase SQL Editor, then reload this page.</p><div class="actions" style="justify-content:center"><button class="btn primary" onclick="location.reload()">Reload</button><button class="btn" onclick="logout()">Sign out</button></div></div>`;
 }
 function blockedHtml() {
   const st = window.__blocked || {};
@@ -424,15 +427,20 @@ function authHtml() {
   const mode = view === 'register' && !['supplier', 'customer'].includes(authMode) ? 'register' : authMode;
   const refFromUrl = new URLSearchParams(location.search).get('ref') || '';
   const heroes = {
-    supplier: ['Sell to shops, <span>without the paperwork.</span>', 'Receive purchase orders from businesses on DeepQr, confirm what you can supply, dispatch with your invoice and see every payment they record — confirmed by you.', [['truck', 'Orders arrive instantly', 'From every business you supply'], ['tag', 'Your price list', 'Matched to their products'], ['coins', 'Verified payments', 'You confirm each payment'], ['shield', 'Verified badge', 'Stand out in the directory']]],
-    customer: ['Shop near you, <span>earn every time.</span>', 'Order from DeepQr shops on your phone, collect at the shop or get it delivered, and collect points you can spend next time.', [['store', 'Local shops', 'Real stock, real prices'], ['truck', 'Pickup or delivery', 'You choose'], ['gift', 'Points & rewards', 'At every shop you visit'], ['qr', 'Genuine products', 'Scan any DeepQr label to check it']]],
-    def: ['Every item, <span>one smart QR.</span>', 'DeepQr gives every physical item its own secure QR code. One scan identifies the product and the shop, and records the sale.', [['qr', 'Unique item QR codes', 'Scan with any phone to verify'], ['cart', 'Scan, cart, receipt', 'Split payments, credit and loyalty'], ['truck', 'Suppliers & orders', 'Order, receive, pay — verified'], ['spark', 'Smart suggestions', 'Learns from your own sales']]]
+    supplier: ['Get orders from shops, and get paid on record.', 'Businesses on DeepQr find you, send purchase orders and record every payment. You confirm what you supply and what you received.', [['truck', 'Orders arrive instantly'], ['tag', 'Your own price list'], ['coins', 'You confirm each payment']]],
+    customer: ['Order from shops near you. Collect it or get it delivered.', 'Real stock and prices from local shops, delivery priced by distance, and points you spend at the next visit.', [['pin', 'Nearest branch first'], ['truck', 'Delivery by the km'], ['gift', 'Points at every shop']]],
+    register: ['Run every branch from one scan.', 'QR labels, the till, stock, suppliers and an online shop with delivery. Set up in minutes, from your phone.', [['qr', 'A QR label for every item'], ['store', 'Your own online shop'], ['spark', 'Suggestions from your sales']]],
+    def: ['One scan sells it, tracks it and proves it is genuine.', 'Every item gets its own DeepQr label. Shops sell at the till and online, suppliers get orders, shoppers earn points.', [['qr', 'A QR label for every item'], ['phone', 'Online shop with delivery'], ['shield', 'Checked payments']]]
   };
   const h = heroes[mode] || heroes.def;
-  const hero = `<div class="authHero"><div class="heroBrand">${logoMark(46)}${wordmark()}</div>
-   <div class="heroMain"><h1>${h[0]}</h1><p>${h[1]}</p>
-   <div class="heroFeatures">${h[2].map(f => `<div class="heroFeature">${icon(f[0])}<div><b>${f[1]}</b><small>${f[2]}</small></div></div>`).join('')}</div>
-   <div class="heroLinks"><button onclick="goPublic('shops')">${icon('store')} Shop online</button><button onclick="goPublic('verify',{code:''})">${icon('qr')} Check a label</button></div></div><div class="heroFoot">© ${new Date().getFullYear()} DeepQr · Built for retail across Tanzania &amp; East Africa</div></div>`;
+  const hero = `<div class="authHero v5"><div class="heroBrand">${logoMark(40)}${wordmark()}</div>
+   <div class="heroMain"><h1>${h[0]}</h1><p>${h[1]}</p></div>
+   <div class="till" aria-hidden="true"><div class="tillBelt" id="tillBelt"><div class="tillLane" id="tillLane"></div><div class="tillScan"><i class="beam"></i></div></div>
+    <div class="tillReceipt"><div class="rcHead"><b>DeepQr till</b><small id="rcNo">Receipt</small></div><div class="rcLines" id="rcLines"></div><div class="rcTotal"><span>Total</span><b id="rcTotal">0 TZS</b></div><div class="rcStamp" id="rcStamp">Paid · M-Pesa</div></div></div>
+   <ul class="heroPoints">${h[2].map(f => `<li>${icon(f[0])}${f[1]}</li>`).join('')}</ul>
+   <div class="heroShow" id="heroShow"></div>
+   <div class="heroLinks"><button onclick="goPublic('shops')">${icon('store')} Shop online</button><button onclick="goPublic('verify',{code:''})">${icon('qr')} Check a label</button></div>
+   <div class="heroFoot">© ${new Date().getFullYear()} DeepQr · Built for retail across Tanzania &amp; East Africa</div></div>`;
   const tabs = `<div class="tabs tabs4"><button class="${mode === 'login' ? 'active' : ''}" data-mode="login">Sign in</button><button class="${mode === 'register' ? 'active' : ''}" data-mode="register">Business</button><button class="${mode === 'supplier' ? 'active' : ''}" data-mode="supplier">Supplier</button><button class="${mode === 'customer' ? 'active' : ''}" data-mode="customer">Shopper</button></div>`;
   const pw = session ? '' : `<div class="formGrid"><div class="field"><label for="rp">Password</label><input id="rp" type="password" required minlength="6" autocomplete="new-password"></div><div class="field"><label for="rp2">Confirm</label><input id="rp2" type="password" required minlength="6" autocomplete="new-password"></div></div>`;
   let form = '';
@@ -469,15 +477,67 @@ function authHtml() {
     <div class="field"><label for="ac">Activation code <span class="muted">(first time only)</span></label><input id="ac" class="mono" placeholder="XXXX-XXXX-XXXX"></div>
     <div id="admErr" class="bad" style="min-height:20px"></div><button class="btn primary lg wide">${icon('shield')} Open portal</button>
     <p class="muted" style="font-size:12.5px;text-align:center;margin:4px 0 0"><button type="button" class="priceBtn" data-mode="login">Back to sign in</button></p></form>`;
-  return `<div class="auth">${hero}<div class="authBox"><div class="panel"><div class="panelBrand">${logoMark(38)}${wordmark()}</div>${mode === 'admin' ? '' : tabs}${form}</div></div></div>`;
+  return `<div class="auth">${hero}<div class="authBox"><div class="panel"><div class="panelBrand">${logoMark(38)}${wordmark()}</div>${mode === 'admin' ? '' : tabs}${form}</div>
+   <div class="authExtras"><div class="heroShow" id="heroShow2"></div><div class="heroLinks"><button onclick="goPublic('shops')">${icon('store')} Shop online</button><button onclick="goPublic('verify',{code:''})">${icon('qr')} Check a label</button></div></div></div></div>`;
 }
 function bindAuth() {
+  tillStart(); heroShowcase();
   document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { authMode = b.dataset.mode; view = authMode === 'register' ? 'register' : 'login'; render(); }));
   const lf = document.getElementById('loginForm'); if (lf) lf.addEventListener('submit', loginSubmit);
   const rf = document.getElementById('registerForm'); if (rf) rf.addEventListener('submit', registerSubmit);
   const af = document.getElementById('adminForm'); if (af) af.addEventListener('submit', adminClaimSubmit);
   const sf = document.getElementById('supRegForm'); if (sf) sf.addEventListener('submit', supplierRegisterSubmit);
   const cf = document.getElementById('custRegForm'); if (cf) cf.addEventListener('submit', customerRegisterSubmit);
+}
+/* ---------------- sign-in hero: a till that scans items into a receipt ---------------- */
+const TILL_ITEMS = [['Mango juice 1 L', 3500, 'bottle', '#F59E0B'], ['Rice 5 kg', 16000, 'bag', '#10B981'], ['Smartphone', 285000, 'phone', '#6366F1'], ['Cooking oil 3 L', 14500, 'bottle', '#EAB308'],
+  ['Kitenge fabric', 25000, 'cloth', '#EC4899'], ['Laundry soap', 2500, 'box', '#0EA5E9'], ['Paracetamol 10s', 1500, 'box', '#EF4444'], ['Solar lamp', 45000, 'phone', '#14B8A6']];
+const TILL_GLYPH = {
+  bottle: '<path d="M16 6h8v5l3 4v19a2 2 0 0 1-2 2H15a2 2 0 0 1-2-2V15l3-4z" fill="currentColor" opacity=".9"/><rect x="15" y="18" width="10" height="8" rx="1" fill="#fff" opacity=".85"/>',
+  bag: '<path d="M10 12h20l2 22H8z" fill="currentColor" opacity=".9"/><path d="M15 12a5 5 0 0 1 10 0" stroke="currentColor" stroke-width="2.5" fill="none"/><rect x="13" y="20" width="14" height="7" rx="1" fill="#fff" opacity=".85"/>',
+  phone: '<rect x="12" y="5" width="16" height="30" rx="3" fill="currentColor" opacity=".9"/><rect x="14.5" y="9" width="11" height="19" rx="1" fill="#fff" opacity=".85"/><circle cx="20" cy="31.5" r="1.5" fill="#fff"/>',
+  box: '<path d="M7 13 20 7l13 6v15l-13 6-13-6z" fill="currentColor" opacity=".9"/><path d="m7 13 13 6 13-6M20 19v15" stroke="#fff" stroke-width="1.6" fill="none" opacity=".8"/>',
+  cloth: '<path d="M8 10h24v20H8z" fill="currentColor" opacity=".9"/><path d="M8 15h24M8 20h24M8 25h24" stroke="#fff" stroke-width="1.6" opacity=".7"/><circle cx="14" cy="17.5" r="1.4" fill="#fff"/><circle cx="26" cy="22.5" r="1.4" fill="#fff"/>'
+};
+const MINI_QR = '<svg viewBox="0 0 7 7" class="miniQr"><path d="M0 0h3v3H0zM4 0h3v3H4zM0 4h3v3H0z" fill="#0A1A44"/><path d="M1 1h1v1H1zM5 1h1v1H5zM1 5h1v1H1z" fill="#fff"/><path d="M4 4h1v1H4zM6 4h1v1H6zM5 5h1v1H5zM4 6h1v1H4zM6 6h1v1H6z" fill="#0A1A44"/></svg>';
+let tillT = null, tillN = 0;
+function tillItems() {
+  const real = (window.__showcase || []).filter(x => x.image_url).slice(0, 8).map(x => ({ name: x.name, price: Number(x.price), cur: x.currency, img: x.image_url }));
+  return [...real, ...TILL_ITEMS.map(([name, price, g, c]) => ({ name, price, cur: 'TZS', g, c }))].slice(0, Math.max(real.length, 8));
+}
+function parcelHtml(it) { return `${it.img ? `<img src="${esc(it.img)}" alt="">` : `<svg viewBox="0 0 40 40" style="color:${it.c}">${TILL_GLYPH[it.g]}</svg>`}${MINI_QR}`; }
+function tillStart() {
+  clearTimeout(tillT);
+  const lane = document.getElementById('tillLane'), lines = document.getElementById('rcLines'); if (!lane || !lines) return;
+  const items = tillItems(); let i = 0, total = 0, count = 0;
+  const totalEl = document.getElementById('rcTotal'), stamp = document.getElementById('rcStamp'), belt = document.getElementById('tillBelt');
+  const addLine = it => {
+    if (count === 0) { lines.innerHTML = ''; total = 0; stamp.classList.remove('show'); document.getElementById('rcNo').textContent = 'Receipt ' + String(1041 + (tillN++)).padStart(5, '0'); }
+    const row = document.createElement('div'); row.className = 'rcLine'; row.innerHTML = `<span>${esc(it.name)}</span><b>${num(it.price)}</b>`; lines.appendChild(row);
+    total += it.price; count++; totalEl.textContent = money(total, it.cur);
+  };
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { items.slice(0, 3).forEach(addLine); stamp.classList.add('show'); return; }
+  const step = () => {
+    if (!document.getElementById('tillLane')) return;
+    if (document.hidden) { tillT = setTimeout(step, 1000); return; }
+    if (count >= 4) { stamp.classList.add('show'); count = 0; tillT = setTimeout(step, 2200); return; }
+    const it = items[i++ % items.length], el = document.createElement('div');
+    el.className = 'parcel'; el.innerHTML = parcelHtml(it); lane.appendChild(el);
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('go')));
+    setTimeout(() => { if (!belt.isConnected) return; belt.classList.add('hit'); el.classList.add('scanned'); addLine(it); setTimeout(() => belt.classList.remove('hit'), 380); }, 1250);
+    setTimeout(() => el.remove(), 2700);
+    tillT = setTimeout(step, 1650);
+  };
+  step();
+}
+function heroShowcase() {
+  const fill = () => {
+    const l = (window.__showcase || []).filter(x => x.image_url);
+    if (!l.length) return;
+    ['heroShow', 'heroShow2'].map(i => document.getElementById(i)).filter(Boolean).forEach(el => el.innerHTML = `<h3>Order now from shops on DeepQr</h3><div class="showRow">${l.slice(0, 10).map(x => `<button class="showTile" onclick="goPublic('store',{slug:'${jsq(x.slug)}'})"><img src="${esc(x.image_url)}" alt="" loading="lazy"><b>${esc(x.name)}</b><span>${money(x.price, x.currency)}</span><small>${esc(x.shop)}</small></button>`).join('')}</div>`);
+  };
+  if (window.__showcase) { fill(); return; }
+  sb.rpc('dq_store_showcase').then(({ data }) => { window.__showcase = data || []; fill(); if (window.__showcase.some(x => x.image_url)) tillStart(); });
 }
 async function signUpIfNeeded(email, errEl) {
   if (session) return true;
@@ -525,10 +585,11 @@ function navGroups() {
     if (perms.can_view_reports) g.push(['Insights', [['reports', 'Reports', 'chart']]]);
   } else if (isStoreOp()) {
     g.push(['Overview', [['dashboard', 'Dashboard', 'dashboard'], ['insights', 'Smart suggestions', 'spark']]]);
-    g.push(['Stock', [['products', 'Products', 'box'], ['catalog', 'Product catalogue', 'spark'], ['qr', 'QR Codes', 'qr'], ['inventory', 'Inventory', 'layers'], ['expiry', 'Expiry', 'clock'], ['transfers', 'Transfers', 'transfer'], ['orders', 'Purchase orders', 'truck']]]);
+    g.push(['Stock', [['products', 'Products', 'box'], ['shopprod', 'Shop products', 'tag'], ['catalog', 'Product catalogue', 'spark'], ['qr', 'QR Codes', 'qr'], ['inventory', 'Inventory', 'layers'], ['expiry', 'Expiry', 'clock'], ['transfers', 'Transfers', 'transfer'], ['orders', 'Purchase orders', 'truck']]]);
     if (perms.can_view_reports) g.push(['Insights', [['reports', 'Reports', 'chart']]]);
   } else {
-    g.push(['Sell', [['dashboard', 'Dashboard', 'dashboard'], ['insights', 'Smart suggestions', 'spark'], ['pos', 'Scan & Sell', 'scan'], ['online', 'Online orders', 'phone'], ['sales', 'Sales', 'receipt'], ['customers', 'Customers', 'users']]]);
+    g.push(['Sell', [['dashboard', 'Dashboard', 'dashboard'], ['insights', 'Smart suggestions', 'spark'], ['pos', 'Scan & Sell', 'scan'], ['sales', 'Sales', 'receipt'], ['customers', 'Customers', 'users']]]);
+    g.push(['Online shop', [['online', 'Online orders', 'phone'], ['shopprod', 'Shop products', 'tag'], ['shopsetup', 'Shop setup', 'store']]]);
     g.push(['Stock', [['products', 'Products', 'box'], ['catalog', 'Product catalogue', 'spark'], ['qr', 'QR Codes', 'qr'], ['inventory', 'Inventory', 'layers'], ['expiry', 'Expiry', 'clock'], ['transfers', 'Transfers', 'transfer'], ['orders', 'Purchase orders', 'truck']]]);
     g.push(['Business', [['reports', 'Reports', 'chart'], ['payments', 'Payments', 'coins'], ['expenses', 'Expenses', 'minus'], ['stores', 'Stores & shops', 'store'], ['users', 'Staff', 'user'], ['devices', 'Devices & scanners', 'phone'], ['wallet', 'QR Wallet', 'wallet'], ['settings', 'Settings', 'settings']]]);
   }
@@ -547,6 +608,7 @@ function navBadge(k) {
   if (k === 'customers') return '';
   if (k === 'portal' && adminData) return b((adminData.topups || []).filter(t => t.status === 'pending').length, 'teal');
   if (k === 'pos' && cache.held.length) return b(cache.held.length, 'teal');
+  if (k === 'shopprod') return business?.store_enabled && (isMgr() || isStoreOp()) ? b(storeStats().noPrice) : '';
   if (k === 'online') return b((cache.online || []).filter(o => o.status === 'placed').length || ooSeen || 0);
   if (k === 'payments') return b((cache.online || []).filter(o => o.payment_status === 'pending_verification' && !['cancelled', 'rejected'].includes(o.status)).length, 'teal');
   if (k.startsWith('portal:') && adminData) return b(portalCount(k.slice(7)) || 0, 'teal');

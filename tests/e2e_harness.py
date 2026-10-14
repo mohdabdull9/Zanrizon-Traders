@@ -30,6 +30,8 @@ LIBMAP = {
     'html5-qrcode.min.js': os.path.join(LIBS, 'html5-qrcode/html5-qrcode.min.js'),
     'qrcode.js': os.path.join(LIBS, 'qrcode-generator/qrcode.js'),
     'exceljs.min.js': os.path.join(LIBS, 'exceljs/dist/exceljs.min.js'),
+    'leaflet.min.js': os.path.join(LIBS, 'leaflet/dist/leaflet.js'),
+    'leaflet.min.css': os.path.join(LIBS, 'leaflet/dist/leaflet.css'),
 }
 def route(r):
     url = r.request.url
@@ -39,14 +41,15 @@ def route(r):
         return r.continue_()
     for k, path in LIBMAP.items():
         if url.split('?')[0].endswith(k):
-            return r.fulfill(path=path, content_type='application/javascript')
+            if not os.path.exists(path): return r.abort()
+            return r.fulfill(path=path, content_type='text/css' if k.endswith('.css') else 'application/javascript')
     if 'fonts.g' in url:
         return r.fulfill(body='', content_type='text/css')
     return r.abort()
 
 errors = []
-def new_page(browser, w=1360, h=900):
-    ctx = browser.new_context(viewport={'width': w, 'height': h})
+def new_page(browser, w=1360, h=900, **ctx_opts):
+    ctx = browser.new_context(viewport={'width': w, 'height': h}, **ctx_opts)
     ctx.route('**/*', route)
     pg = ctx.new_page()
     pg.on('pageerror', lambda e: errors.append(str(e)))

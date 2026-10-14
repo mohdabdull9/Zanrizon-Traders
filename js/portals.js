@@ -76,16 +76,27 @@ PAGES.shops = {
     const l = viewParams.list;
     return `<div class="card"><div class="toolbar" style="margin:0"><input class="input grow" id="shQ" value="${esc(shopsQ)}" placeholder="Search a shop or area, e.g. Kariakoo" onkeydown="if(event.key==='Enter'){shopsQ=this.value;viewParams.list=null;renderView()}"><button class="btn primary" onclick="shopsQ=document.getElementById('shQ').value;viewParams.list=null;renderView()">${icon('search')}Search</button></div>
      <div class="pillRow" style="margin:12px 0 0"><button class="pill ${!shopsG ? 'active' : ''}" onclick="shopsG='';viewParams.list=null;renderView()">All</button>${REF.groups.map(g => `<button class="pill ${shopsG === g.code ? 'active' : ''}" onclick="shopsG='${g.code}';viewParams.list=null;renderView()">${esc(g.name)}</button>`).join('')}</div></div>
-     <div class="shopGrid">${l.map(s => `<button class="shopCard" onclick="goPublic('store',{slug:'${jsq(s.slug)}'})"><div class="shopLogo">${esc((s.name || 'S').slice(0, 2).toUpperCase())}</div><div><b>${esc(s.name)}</b><small>${esc(s.tagline || (s.groups || []).map(groupName).join(' · '))}</small><div class="shopMeta">${s.area ? `<span>${icon('store')}${esc(s.area)}</span>` : ''}<span>${icon('box')}${s.products} products</span>${s.delivery ? `<span>${icon('truck')}Delivery</span>` : ''}${s.pickup ? `<span>${icon('check')}Pickup</span>` : ''}${s.loyalty ? `<span class="ok">${icon('gift')}Points</span>` : ''}</div></div></button>`).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('store', 'No shops found', 'Try another search. Shops appear here when they open their DeepQr online shop.')}</div>`}</div>`;
+     <div class="shopGrid">${l.map(s => `<button class="shopCard" onclick="goPublic('store',{slug:'${jsq(s.slug)}'})">${(s.images || []).length ? `<div class="shopPics">${s.images.slice(0, 3).map(u => `<img src="${esc(u)}" alt="" loading="lazy">`).join('')}</div>` : ''}<div class="shopLogo">${esc((s.name || 'S').slice(0, 2).toUpperCase())}</div><div><b>${esc(s.name)}</b><small>${esc(s.tagline || (s.groups || []).map(groupName).join(' · '))}</small><div class="shopMeta">${s.area ? `<span>${icon('store')}${esc(s.area)}</span>` : ''}<span>${icon('box')}${s.products} products</span>${s.branches > 1 ? `<span>${icon('pin')}${s.branches} branches</span>` : ''}${s.delivery ? `<span>${icon('truck')}Delivery${s.delivery_mode === 'distance' ? ' by distance' : ''}</span>` : ''}${s.pickup ? `<span>${icon('check')}Pickup</span>` : ''}${s.loyalty ? `<span class="ok">${icon('gift')}Points</span>` : ''}</div></div></button>`).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('store', 'No shops found', 'Try another search. Shops appear here when they open their DeepQr online shop.')}</div>`}</div>`;
   }
 };
 
 /* ---------------- public: one shop + basket ---------------- */
-let storeData = null, storeCat = '', storeQ = '';
+let storeData = null, storeCat = '', storeQ = '', storeHere = null;
 function basketKey(slug) { return 'dq_basket_' + (slug || viewParams.slug || pub?.params?.slug || ''); }
 function basket(slug) { return lsJson(basketKey(slug), []); }
 function saveBasket(b, slug) { lsSet(basketKey(slug), JSON.stringify(b)); }
 function basketCount() { return sum(basket(), 'qty'); }
+function storeBranch() {
+  if (!storeData || storeData.error) return null;
+  const id = lsGet('dq_branch_' + storeData.store.slug);
+  return storeData.branches.find(b => b.id === id) || storeData.branches.find(b => b.id === storeData.branch) || storeData.branches[0] || null;
+}
+function pStock(p) { const b = storeBranch(); return b ? Number(p.stock_by?.[b.id] || 0) : Number(p.stock || 0); }
+function storeProd(id) { return storeData?.products.find(p => p.id === id); }
+function storeImg(p, cls = '') {
+  return p.image_url ? `<img class="${cls}" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy">`
+    : `<span class="${cls} noImg" style="--g:${GROUP_TONES[p.group_code] || 'var(--primary-2)'}">${icon('box')}<b>${esc((p.name.split(/\s+/).filter(w => /^[A-Za-z]/.test(w)).slice(0, 2).map(w => w[0]).join('') || p.name.slice(0, 1)).toUpperCase())}</b></span>`;
+}
 PAGES.store = {
   title: 'Shop', sub: '', noHead: true,
   render: () => {
@@ -95,78 +106,151 @@ PAGES.store = {
       return `<div class="card"><div class="empty"><span class="spinner"></span> Opening the shop…</div></div>`;
     }
     if (storeData.error) return `<div class="card">${emptyState('store', 'This shop is not open online', esc(storeData.error), `<button class="btn primary" onclick="goPublic('shops')">See other shops</button>`)}</div>`;
-    const s = storeData.store, cur2 = s.currency;
+    const s = storeData.store, cur2 = s.currency, br = storeBranch();
     document.title = s.name + ' · DeepQr';
     let list = storeData.products;
     const cats = [...new Set(list.map(p => p.category || 'Other'))].sort();
     if (storeCat) list = list.filter(p => (p.category || 'Other') === storeCat);
-    if (storeQ) { const q = storeQ.toLowerCase(); list = list.filter(p => (p.name + ' ' + (p.brand || '') + ' ' + (p.category || '')).toLowerCase().includes(q)); }
-    const b = basket(slug);
-    const inB = id => b.find(x => x.id === id)?.qty || 0;
-    return `<div class="storeHero"><div class="shopLogo lg">${esc(s.name.slice(0, 2).toUpperCase())}</div><div style="flex:1;min-width:0"><h1>${esc(s.name)}</h1><p>${esc(s.tagline || '')}</p>
-       <div class="shopMeta">${s.area ? `<span>${icon('store')}${esc(s.area)}</span>` : ''}${s.hours ? `<span>${icon('clock')}${esc(s.hours)}</span>` : ''}${s.pickup ? `<span>${icon('check')}Pickup${s.pickup_shop ? ' at ' + esc(s.pickup_shop) : ''}</span>` : ''}${s.delivery ? `<span>${icon('truck')}Delivery ${Number(s.delivery_fee) ? money(s.delivery_fee, cur2) : 'free'}${s.free_delivery_over ? ` · free over ${money(s.free_delivery_over, cur2)}` : ''}</span>` : ''}${Number(s.min_order) ? `<span>Min. order ${money(s.min_order, cur2)}</span>` : ''}</div></div>
+    if (storeQ) { const q = storeQ.toLowerCase(); list = list.filter(p => (p.name + ' ' + (p.brand || '') + ' ' + (p.category || '') + ' ' + (p.description || '')).toLowerCase().includes(q)); }
+    list = [...list].sort((a, b) => (pStock(b) > 0) - (pStock(a) > 0));
+    const b = basket(slug), inB = id => b.find(x => x.id === id)?.qty || 0;
+    const fee = s.delivery ? (s.delivery_mode === 'distance' ? `Delivery from ${money(s.base_fee, cur2)}${Number(s.per_km) ? ` + ${money(s.per_km, cur2)}/km` : ''}` : `Delivery ${Number(s.delivery_fee) ? money(s.delivery_fee, cur2) : 'free'}`) : '';
+    return `<div class="storeHero"><div class="shopLogo lg">${esc(s.name.slice(0, 2).toUpperCase())}</div><div style="flex:1;min-width:0"><h1>${esc(s.name)}</h1>${s.tagline ? `<p>${esc(s.tagline)}</p>` : ''}
+       <div class="shopMeta">${s.area ? `<span>${icon('pin')}${esc(s.area)}</span>` : ''}${s.hours ? `<span>${icon('clock')}${esc(s.hours)}</span>` : ''}${s.pickup ? `<span>${icon('store')}Pickup</span>` : ''}${fee ? `<span>${icon('truck')}${fee}${s.free_delivery_over ? ` · free over ${money(s.free_delivery_over, cur2)}` : ''}</span>` : ''}${Number(s.min_order) ? `<span>Min. order ${money(s.min_order, cur2)}</span>` : ''}</div></div>
        ${s.loyalty ? `<div class="pointsBadge">${icon('gift')}<div><b>${storeData.me ? num(storeData.me.points) + ' points' : 'Earn points'}</b><small>${storeData.me ? 'worth ' + money(storeData.me.points * s.point_value, cur2) : `1 point per ${money(s.points_per_amount, cur2)}${s.first_order_points ? ` · +${s.first_order_points} on your first online order` : ''}`}</small></div></div>` : ''}</div>
-     <div class="card"><div class="toolbar" style="margin:0"><input class="input grow" id="stQ" value="${esc(storeQ)}" placeholder="Search products…" oninput="storeQ=this.value;const p=this.selectionStart;renderView();const e=document.getElementById('stQ');e.focus();e.setSelectionRange(p,p)"></div>
-      <div class="pillRow" style="margin:12px 0 0"><button class="pill ${!storeCat ? 'active' : ''}" onclick="storeCat='';renderView()">All</button>${cats.map(c => `<button class="pill ${storeCat === c ? 'active' : ''}" onclick="storeCat='${jsq(c)}';renderView()">${esc(c)}</button>`).join('')}</div></div>
-     <div class="prodCards">${list.map(p => { const q = inB(p.id), out = Number(p.stock) <= 0, few = !out && Number(p.stock) <= 5; return `<div class="prodCard ${out ? 'out' : ''}"><div class="pcTop">${groupDot(p.group_code)}<small>${esc(p.category || '')}</small>${out ? '<span class="tag gray">Sold out</span>' : few ? `<span class="tag warn">Only ${num(p.stock)} left</span>` : '<span class="tag ok">In stock</span>'}</div>
-        <b class="pcName">${esc(p.name)}</b><small class="muted">${esc([p.pack_size, p.unit].filter(Boolean).join(' · '))}</small><div class="pcPrice">${money(p.price, cur2)}</div>
-        ${out ? '' : q ? `<div class="qtyBox"><button onclick="basketAdd('${p.id}',-1)" aria-label="Less">−</button><input value="${q}" readonly aria-label="Quantity"><button onclick="basketAdd('${p.id}',1)" aria-label="More">+</button></div>` : `<button class="btn primary wide" onclick="basketAdd('${p.id}',1)">${icon('plus')}Add</button>`}</div>`; }).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('search', 'Nothing here', 'Try another search or category.')}</div>`}</div>
+     ${br ? `<button class="branchBar" onclick="storeBranchPicker()">${icon('pin')}<span>Shopping at <b>${esc(br.name)}</b>${br.address ? ` · ${esc(br.address)}` : ''}${storeHere && br.lat != null ? ` · ${fmtKm(kmBetween(storeHere, br))} km from you` : ''}</span>${storeData.branches.length > 1 ? `<b class="chg">Change</b>` : ''}</button>` : ''}
+     <div class="storeTools"><input class="input" id="stQ" value="${esc(storeQ)}" placeholder="Search ${storeData.products.length} products…" oninput="storeQ=this.value;const p=this.selectionStart;renderView();const e=document.getElementById('stQ');e.focus();e.setSelectionRange(p,p)">
+      <div class="pillRow"><button class="pill ${!storeCat ? 'active' : ''}" onclick="storeCat='';renderView()">All</button>${cats.map(c => `<button class="pill ${storeCat === c ? 'active' : ''}" onclick="storeCat='${jsq(c)}';renderView()">${esc(c)}</button>`).join('')}</div></div>
+     <div class="prodCards">${list.map(p => { const q = inB(p.id), st = pStock(p), out = st <= 0, few = !out && st <= 5; return `<div class="prodCard ${out ? 'out' : ''}"><button class="pcImg" onclick="storeSheet('${p.id}')" aria-label="See ${esc(p.name)}">${storeImg(p)}${p.featured ? `<i class="pcStar">${icon('star')}Popular</i>` : ''}${out ? '<i class="pcOut">Sold out here</i>' : few ? `<i class="pcFew">Only ${num(st)} left</i>` : ''}</button>
+        <button class="pcName" onclick="storeSheet('${p.id}')">${esc(p.name)}</button><small class="muted">${esc([p.pack_size, p.unit].filter(Boolean).join(' · '))}</small><div class="pcPrice">${money(p.price, cur2)}</div>
+        ${out ? (storeData.branches.length > 1 && Object.keys(p.stock_by || {}).length ? `<button class="btn small ghost wide" onclick="storeBranchPicker('${p.id}')">${icon('pin')}Available at another branch</button>` : '') : q ? `<div class="qtyBox"><button onclick="basketAdd('${p.id}',-1)" aria-label="Less">−</button><input value="${q}" readonly aria-label="Quantity"><button onclick="basketAdd('${p.id}',1)" aria-label="More">+</button></div>` : `<button class="btn primary wide" onclick="basketAdd('${p.id}',1)">${icon('plus')}Add</button>`}</div>`; }).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('search', 'Nothing here', 'Try another search or category.')}</div>`}</div>
      ${b.length ? `<button class="basketBar" onclick="openBasket()"><span>${icon('cart')} ${basketCount()} item(s) in your basket</span><b>${money(basketTotal(), cur2)} · Checkout ${icon('arrowRight')}</b></button>` : ''}`;
   }
 };
-function basketTotal() { return sum(basket(), x => x.qty * (storeData?.products.find(p => p.id === x.id)?.price || 0)); }
+function storeSheet(id) {
+  const p = storeProd(id); if (!p) return;
+  const s = storeData.store, st = pStock(p), q = basket().find(x => x.id === id)?.qty || 0, pics = (p.photos || []).length ? p.photos : (p.image_url ? [p.image_url] : []);
+  modal(`<div class="sheetTop"><button class="btn ghost" onclick="closeModal()" aria-label="Close">${icon('x')}</button></div>
+   <div class="sheetPics">${pics.length ? pics.map(u => `<img src="${esc(u)}" alt="${esc(p.name)}">`).join('') : storeImg(p, 'big')}</div>${pics.length > 1 ? `<p class="muted" style="text-align:center;font-size:12px;margin:6px 0 0">Swipe for ${pics.length} photos</p>` : ''}
+   <h2 style="margin:14px 0 2px">${esc(p.name)}</h2><p class="muted" style="margin:0">${esc([p.brand, p.pack_size, p.unit, p.category].filter(Boolean).join(' · '))}</p>
+   <div class="sheetPrice">${money(p.price, s.currency)}<span class="tag ${st > 5 ? 'ok' : st > 0 ? 'warn' : 'gray'}">${st > 5 ? 'In stock' : st > 0 ? `Only ${num(st)} left` : 'Sold out at this branch'}</span></div>
+   ${p.description ? `<p style="white-space:pre-line;margin:10px 0 0">${esc(p.description)}</p>` : ''}
+   <div class="actions" style="margin-top:16px">${st > 0 ? `<button class="btn primary lg wide" onclick="basketAdd('${p.id}',1);storeSheet('${p.id}')">${icon('plus')}${q ? `Add one more (${q} in basket)` : 'Add to basket'}</button>${q ? `<button class="btn lg" onclick="closeModal();openBasket()">${icon('cart')}Checkout</button>` : ''}` : storeData.branches.length > 1 ? `<button class="btn lg wide" onclick="storeBranchPicker('${p.id}')">${icon('pin')}Find a branch that has it</button>` : ''}</div>`, 'sheet');
+}
+function storeBranchPicker(pid) {
+  const p = pid ? storeProd(pid) : null, cur3 = storeBranch();
+  const rows = [...storeData.branches].map(b => ({ b, km: storeHere ? kmBetween(storeHere, b) : null })).sort((x, y) => (x.km ?? 1e9) - (y.km ?? 1e9));
+  modal(`<div class="cardHead"><div><h3>${icon('pin')} Choose a branch</h3><p>${p ? `Where ${esc(p.name)} is in stock.` : 'Stock and pickup are per branch. Delivery is priced from the branch you choose.'}</p></div><button class="btn ghost" onclick="closeModal()">${icon('x')}</button></div>
+   ${storeHere ? '' : `<button class="btn wide" style="margin-bottom:10px" onclick="storeFindNearest(this,'${pid || ''}')">${icon('pin')}Find the nearest branch to me</button>`}
+   ${rows.map(({ b, km }) => { const has = p ? Number(p.stock_by?.[b.id] || 0) : null; return `<button class="row clickRow brPick ${cur3?.id === b.id ? 'active' : ''}" onclick="storeSetBranch('${b.id}')" ${p && !has ? 'disabled' : ''}><span><b>${esc(b.name)}</b><small class="muted" style="display:block">${esc(b.address || '')}${km != null ? ` · ${fmtKm(km)} km from you` : ''}</small></span>${p ? (has ? `<span class="tag ok">${num(has)} in stock</span>` : '<span class="tag gray">Sold out</span>') : cur3?.id === b.id ? '<span class="tag info">Selected</span>' : ''}</button>`; }).join('')}`, 'narrow');
+}
+async function storeFindNearest(btn, pid) {
+  await withBusy(btn, async () => {
+    try { storeHere = await myLocation(); const near = storeData.branches.filter(b => b.lat != null && (!pid || Number(storeProd(pid)?.stock_by?.[b.id] || 0) > 0)).sort((a, b) => kmBetween(storeHere, a) - kmBetween(storeHere, b))[0];
+      if (near) { storeSetBranch(near.id); toast(`Nearest branch: ${near.name} (${fmtKm(kmBetween(storeHere, near))} km)`, 'ok'); } else storeBranchPicker(pid);
+    } catch (x) { toast(x.message, 'bad'); }
+  });
+}
+function storeSetBranch(id) {
+  lsSet('dq_branch_' + storeData.store.slug, id); if (coState) coState.quote = null;
+  const b = basket(); let cut = 0;
+  b.forEach(x => { const p = storeProd(x.id); const st = p ? pStock(p) : 0; if (x.qty > st) { x.qty = st; cut++; } });
+  saveBasket(b.filter(x => x.qty > 0)); closeModal(); render();
+  if (cut) toast(`${cut} product(s) in your basket were reduced to what this branch has`, 'bad');
+}
+function basketTotal() { return sum(basket(), x => x.qty * (storeProd(x.id)?.price || 0)); }
 function basketAdd(id, d) {
-  const b = basket(), p = storeData.products.find(x => x.id === id); let l = b.find(x => x.id === id);
+  const b = basket(), p = storeProd(id); let l = b.find(x => x.id === id);
   if (!l) { l = { id, qty: 0 }; b.push(l); }
   l.qty = Math.max(0, l.qty + d);
-  if (l.qty > Number(p.stock)) { l.qty = Number(p.stock); toast(`Only ${num(p.stock)} ${p.name} available`, 'bad'); }
-  saveBasket(b.filter(x => x.qty > 0)); renderView();
+  const st = pStock(p);
+  if (l.qty > st) { l.qty = st; toast(`Only ${num(st)} ${p.name} at ${storeBranch()?.name || 'this branch'}`, 'bad'); }
+  saveBasket(b.filter(x => x.qty > 0)); if (coState) coState.quote = coState.quote && { ...coState.quote, stale: true };
+  renderView();
   const top = document.querySelector('.basketBtn'); if (top) top.outerHTML = `<button class="basketBtn" onclick="openBasket()">${icon('cart')}<span>Basket</span>${basketCount() ? `<b>${basketCount()}</b>` : ''}</button>`;
 }
 let coState = null;
 function openBasket() {
   if (!storeData || storeData.error) return;
-  const s = storeData.store, b = basket(), cur2 = s.currency;
+  const s = storeData.store, b = basket();
   if (!b.length) { toast('Your basket is empty'); return; }
-  coState = coState && coState.slug === s.slug ? coState : { slug: s.slug, fulfilment: s.pickup ? 'pickup' : 'delivery', method: s.pay_on_collection ? 'Pay on collection' : (s.payment_accounts[0]?.method || 'M-Pesa'), points: 0, address: customerAcc?.address || '', ref: '', note: '' };
+  const saved = lsJson('dq_drop', null);
+  coState = coState && coState.slug === s.slug ? coState : { slug: s.slug, fulfilment: s.pickup ? 'pickup' : 'delivery', method: s.pay_on_collection ? 'Pay on collection' : (s.payment_accounts[0]?.method || 'M-Pesa'), points: 0, address: customerAcc?.address || saved?.address || '', ref: '', note: '', drop: saved?.lat != null ? { lat: saved.lat, lng: saved.lng } : null, quote: null };
   drawCheckout();
 }
 function coTotals() {
   const s = storeData.store, sub = basketTotal();
-  const fee = coState.fulfilment === 'delivery' ? (s.free_delivery_over && sub >= Number(s.free_delivery_over) ? 0 : Number(s.delivery_fee || 0)) : 0;
+  const fee = coState.fulfilment === 'delivery' ? (coState.quote?.ok ? Number(coState.quote.fee) : (s.delivery_mode === 'distance' ? 0 : (s.free_delivery_over && sub >= Number(s.free_delivery_over) ? 0 : Number(s.delivery_fee || 0)))) : 0;
   const pv = Math.min(Math.round(Number(coState.points || 0) * Number(s.point_value || 0) * 100) / 100, sub);
   return { sub, fee, pv, total: Math.max(0, Math.round((sub + fee - pv) * 100) / 100) };
 }
+const coQuote = debounce(async () => {
+  if (!coState || coState.fulfilment !== 'delivery') return;
+  const br = storeBranch();
+  const { data, error } = await sb.rpc('dq_delivery_quote', { p: { slug: coState.slug, shop_id: br?.id, lat: coState.drop?.lat, lng: coState.drop?.lng, subtotal: basketTotal() } });
+  coState.quote = error ? { ok: false, reason: errMsg(error) } : data;
+  const el = document.getElementById('coFee'); if (el) el.innerHTML = coFeeHtml();
+  const sm = document.getElementById('coSum'); if (sm) sm.innerHTML = coSumHtml();
+}, 250);
+function coFeeHtml() {
+  const s = storeData.store, q = coState.quote, br = storeBranch();
+  if (!q) return `<span class="spinner sm"></span> Working out the delivery fee…`;
+  if (!q.ok) return `<span class="${q.need_location ? '' : 'bad'}">${icon(q.need_location ? 'pin' : 'alert')} ${esc(q.reason)}</span>`;
+  return `${icon('truck')} ${q.km != null ? `About <b>${fmtKm(q.km)} km</b> from ${esc(br?.name || '')} · ` : ''}Delivery <b>${q.free ? 'free' : money(q.fee, s.currency)}</b>${q.free && q.full_fee ? ` <s class="muted">${money(q.full_fee, s.currency)}</s>` : ''}`;
+}
+function coSetDrop(p, from) {
+  coState.drop = p; coState.quote = null; lsSet('dq_drop', JSON.stringify({ lat: p.lat, lng: p.lng, address: coState.address }));
+  const el = document.getElementById('coFee'); if (el) el.innerHTML = coFeeHtml();
+  if (from !== 'map' && window.__coMap) window.__coMap.set(p);
+  coQuote();
+}
+async function coLocate(btn) { await withBusy(btn, async () => { try { const p = await myLocation(); storeHere = p; coSetDrop(p); toast(`Location found (±${p.acc} m). Move the pin if it is not exact.`, 'ok'); } catch (x) { toast(x.message, 'bad'); } }); }
 function drawCheckout() {
-  const s = storeData.store, cur2 = s.currency, b = basket(), t = coTotals(), pts = storeData.me?.points || 0;
+  const s = storeData.store, cur2 = s.currency, b = basket(), t = coTotals(), pts = storeData.me?.points || 0, br = storeBranch();
   const methods = [...(s.pay_on_collection ? ['Pay on collection'] : []), ...new Set((s.payment_accounts || []).map(a => a.method).filter(Boolean))];
   const acct = (s.payment_accounts || []).filter(a => a.method === coState.method);
-  modal(`<div class="cardHead"><div><h3>${icon('cart')} Your order at ${esc(s.name)}</h3><p>Check your basket, choose how to get it and how to pay.</p></div><button class="btn ghost" onclick="closeModal()">${icon('x')}</button></div>
-   <div class="coLines">${b.map(x => { const p = storeData.products.find(y => y.id === x.id); if (!p) return ''; return `<div class="row"><span><b>${esc(p.name)}</b><small class="muted"> × ${x.qty}</small></span><span class="actions" style="flex-wrap:nowrap"><b class="num">${money(x.qty * p.price, cur2)}</b><button class="btn small ghost" onclick="basketAdd('${p.id}',-${x.qty});openBasket()" aria-label="Remove">${icon('trash')}</button></span></div>`; }).join('')}</div>
-   <h3 style="margin:16px 0 8px">1. How do you want it?</h3><div class="seg big">${s.pickup ? `<button class="${coState.fulfilment === 'pickup' ? 'active' : ''}" onclick="coState.fulfilment='pickup';drawCheckout()">${icon('store')}Collect at the shop</button>` : ''}${s.delivery ? `<button class="${coState.fulfilment === 'delivery' ? 'active' : ''}" onclick="coState.fulfilment='delivery';drawCheckout()">${icon('truck')}Deliver to me${Number(s.delivery_fee) ? ' · ' + money(s.delivery_fee, cur2) : ''}</button>` : ''}</div>
-   ${coState.fulfilment === 'delivery' ? `<div class="field" style="margin-top:10px"><label for="coA">Delivery address *</label><input id="coA" value="${esc(coState.address)}" placeholder="Street, area, landmark" oninput="coState.address=this.value"></div>` : `<p class="muted" style="font-size:13px;margin:8px 0 0">Collect at ${esc(s.pickup_shop || s.name)}${s.address ? ', ' + esc(s.address) : ''}. The shop tells you when it is ready.</p>`}
+  const dist = s.delivery_mode === 'distance';
+  modal(`<div class="cardHead"><div><h3>${icon('cart')} Your order at ${esc(s.name)}</h3><p>${br ? `From ${esc(br.name)}. ` : ''}Check your basket, choose how to get it and how to pay.</p></div><button class="btn ghost" onclick="closeModal()">${icon('x')}</button></div>
+   <div class="coLines">${b.map(x => { const p = storeProd(x.id); if (!p) return ''; return `<div class="row"><span class="coItem">${p.image_url ? `<img src="${esc(p.image_url)}" alt="">` : ''}<span><b>${esc(p.name)}</b><small class="muted"> × ${x.qty}</small></span></span><span class="actions" style="flex-wrap:nowrap"><b class="num">${money(x.qty * p.price, cur2)}</b><button class="btn small ghost" onclick="basketAdd('${p.id}',-${x.qty});basket().length?drawCheckout():closeModal()" aria-label="Remove">${icon('trash')}</button></span></div>`; }).join('')}</div>
+   <h3 style="margin:16px 0 8px">How do you want it?</h3><div class="seg big">${s.pickup ? `<button class="${coState.fulfilment === 'pickup' ? 'active' : ''}" onclick="coState.fulfilment='pickup';drawCheckout()">${icon('store')}Collect at the shop</button>` : ''}${s.delivery ? `<button class="${coState.fulfilment === 'delivery' ? 'active' : ''}" onclick="coState.fulfilment='delivery';drawCheckout()">${icon('truck')}Deliver to me</button>` : ''}</div>
+   ${coState.fulfilment === 'delivery' ? `<div class="dropBox">
+      ${dist || br?.lat != null ? `<div class="actions" style="margin:10px 0 8px"><button class="btn" id="coLoc" onclick="coLocate(this)">${icon('pin')}Use my current location</button><span class="muted" style="align-self:center;font-size:12.5px">or tap the map where we should deliver</span></div><div id="coMap" class="mapBox sm"></div>` : ''}
+      <div class="feeLine" id="coFee">${coFeeHtml()}</div>
+      <div class="field" style="margin-top:10px"><label for="coA">Delivery address and directions *</label><input id="coA" value="${esc(coState.address)}" placeholder="Street, house, landmark (e.g. blue gate near the mosque)" oninput="coState.address=this.value"></div></div>`
+     : `<div class="pickBox">${icon('store')}<div><b>${esc(br?.name || s.pickup_shop || s.name)}</b><small class="muted" style="display:block">${esc(br?.address || s.address || '')}${br?.phone ? ' · ' + esc(br.phone) : ''}</small>${br?.lat != null ? `<a class="priceBtn" target="_blank" rel="noopener" href="${mapsLink(br.lat, br.lng)}">${icon('arrowRight')}Directions to the shop</a>` : ''}<p class="muted" style="margin:4px 0 0;font-size:12.5px">The shop tells you when it is ready.</p></div>${storeData.branches.length > 1 ? `<button class="btn small" onclick="storeBranchPicker()">Change</button>` : ''}</div>`}
    <div class="field" style="margin-top:10px"><label for="coW">When do you want it? (optional)</label><input id="coW" value="${esc(coState.wanted || '')}" placeholder="e.g. Today after 5 pm" oninput="coState.wanted=this.value"></div>
-   <h3 style="margin:16px 0 8px">2. How will you pay?</h3><div class="seg big wrap">${methods.map(m => `<button class="${coState.method === m ? 'active' : ''}" onclick="coState.method='${jsq(m)}';drawCheckout()">${icon(m === 'Pay on collection' ? 'coins' : 'phone')}${esc(m === 'Pay on collection' ? (coState.fulfilment === 'delivery' ? 'Pay on delivery' : 'Pay at the shop') : m)}</button>`).join('')}</div>
+   <h3 style="margin:16px 0 8px">How will you pay?</h3><div class="seg big wrap">${methods.map(m => `<button class="${coState.method === m ? 'active' : ''}" onclick="coState.method='${jsq(m)}';drawCheckout()">${icon(m === 'Pay on collection' ? 'coins' : 'phone')}${esc(m === 'Pay on collection' ? (coState.fulfilment === 'delivery' ? 'Pay on delivery' : 'Pay at the shop') : m)}</button>`).join('')}</div>
    ${coState.method !== 'Pay on collection' ? `<div class="payBox">${acct.map(a => `<div class="payAcct">${icon('phone')}<div style="flex:1"><small class="muted">${esc(a.method)}${a.name ? ' · ' + esc(a.name) : ''}</small><div class="num">${esc(a.number)}</div></div><button class="btn small" onclick="copyText('${jsq(a.number)}','Number copied')">${icon('copy')}Copy</button></div>`).join('')}
-     <ol class="steps2"><li>Send <b>${money(t.total, cur2)}</b> to the number above.</li><li>Type the transaction reference from the confirmation SMS.</li><li>The shop checks the payment and starts your order.</li></ol>
+     <ol class="steps2"><li>Send <b id="coPayAmt">${money(t.total, cur2)}</b> to the number above.</li><li>Type the transaction reference from the confirmation SMS.</li><li>The shop checks the payment and starts your order.</li></ol>
      <div class="field"><label for="coR">Transaction reference *</label><input id="coR" class="mono" value="${esc(coState.ref)}" placeholder="e.g. QK72HT91XZ" oninput="coState.ref=this.value" style="text-transform:uppercase"></div></div>` : ''}
    ${s.loyalty && pts >= Number(s.min_redeem_points || 0) && pts > 0 ? `<div class="row" style="margin-top:12px"><span>${icon('gift')} Use your points <small class="muted">(${num(pts)} available, worth ${money(pts * s.point_value, cur2)})</small></span><span class="actions"><input class="input" type="number" min="0" max="${pts}" value="${coState.points || ''}" placeholder="Points" style="width:110px" oninput="coState.points=Math.min(${pts},Math.max(0,Number(this.value)||0));document.getElementById('coSum').innerHTML=coSumHtml()"></span></div>` : s.loyalty ? `<p class="muted" style="font-size:12.5px;margin-top:10px">${icon('gift')} You will earn about <b>${num(Math.floor(t.total / Math.max(Number(s.points_per_amount || 1000), 1)))}</b> points with this order.</p>` : ''}
    <div class="field" style="margin-top:10px"><label for="coN">Note to the shop</label><input id="coN" value="${esc(coState.note)}" oninput="coState.note=this.value"></div>
    <div class="totals" id="coSum">${coSumHtml()}</div>
    <div id="coErr" class="bad" style="min-height:20px;margin-top:8px"></div>
-   <div class="actions"><button class="btn primary lg wide" onclick="placeOrder(this)">${icon('check')}${customerAcc ? 'Place order' : 'Sign in & place order'}</button></div>`);
+   <div class="actions"><button class="btn primary lg wide" id="coPlace" onclick="placeOrder(this)">${icon('check')}${customerAcc ? 'Place order' : 'Sign in & place order'}</button></div>`);
+  if (coState.fulfilment === 'delivery') {
+    if (document.getElementById('coMap')) window.__coMap = mountMap('coMap', coState.drop || (br?.lat != null ? { lat: br.lat, lng: br.lng } : null), p => coSetDrop(p, 'map'), { others: storeData.branches.filter(x => x.lat != null) });
+    if (!coState.quote || coState.quote.stale) { coState.quote = null; coQuote(); }
+  }
 }
-function coSumHtml() { const s = storeData.store, t = coTotals(), c = s.currency; return `<div class="row"><span>Products</span><b>${money(t.sub, c)}</b></div>${t.fee ? `<div class="row"><span>Delivery</span><b>${money(t.fee, c)}</b></div>` : ''}${t.pv ? `<div class="row ok"><span>Points</span><b>− ${money(t.pv, c)}</b></div>` : ''}<div class="row grand"><span>Total</span><span>${money(t.total, c)}</span></div>`; }
+function coSumHtml() {
+  const s = storeData.store, t = coTotals(), c = s.currency, q = coState.quote;
+  const pa = document.getElementById('coPayAmt'); if (pa) pa.textContent = money(t.total, c);
+  return `<div class="row"><span>Products</span><b>${money(t.sub, c)}</b></div>${coState.fulfilment === 'delivery' ? `<div class="row"><span>Delivery${q?.km != null ? ` (${fmtKm(q.km)} km)` : ''}</span><b>${q?.ok ? (t.fee ? money(t.fee, c) : 'Free') : '—'}</b></div>` : ''}${t.pv ? `<div class="row ok"><span>Points</span><b>− ${money(t.pv, c)}</b></div>` : ''}<div class="row grand"><span>Total</span><span>${money(t.total, c)}</span></div>`;
+}
 async function placeOrder(btn) {
   const err = document.getElementById('coErr'); err.textContent = '';
   if (!customerAcc) { closeModal(); shopperAuth(() => openBasket()); return; }
-  const s = storeData.store;
+  const s = storeData.store, br = storeBranch();
   if (coState.fulfilment === 'delivery' && !coState.address.trim()) { err.textContent = 'Enter the delivery address.'; return; }
+  if (coState.fulfilment === 'delivery' && coState.quote && !coState.quote.ok) { err.textContent = coState.quote.reason; return; }
   if (coState.method !== 'Pay on collection' && coState.ref.trim().length < 4) { err.textContent = 'Enter the transaction reference from your payment message.'; return; }
   if (coTotals().sub < Number(s.min_order || 0)) { err.textContent = `The minimum order is ${money(s.min_order, s.currency)}.`; return; }
   await withBusy(btn, async () => {
     try {
-      const o = await rpc('dq_place_online_order', { p: { slug: s.slug, fulfilment: coState.fulfilment, delivery_address: coState.address, payment_method: coState.method, payment_reference: coState.ref, points_redeem: coState.points || 0, note: coState.note, wanted_at: coState.wanted, items: basket().map(x => ({ product_id: x.id, qty: x.qty })) } });
+      const o = await rpc('dq_place_online_order', { p: { slug: s.slug, shop_id: br?.id, fulfilment: coState.fulfilment, delivery_address: coState.address, lat: coState.fulfilment === 'delivery' ? coState.drop?.lat : null, lng: coState.fulfilment === 'delivery' ? coState.drop?.lng : null,
+        payment_method: coState.method, payment_reference: coState.ref, points_redeem: coState.points || 0, note: coState.note, wanted_at: coState.wanted, items: basket().map(x => ({ product_id: x.id, qty: x.qty })) } });
+      if (coState.fulfilment === 'delivery') lsSet('dq_drop', JSON.stringify({ lat: coState.drop?.lat, lng: coState.drop?.lng, address: coState.address }));
       saveBasket([]); coState = null; storeData = null; closeModal(); beep(true);
       goPublic('c_home', { tab: 'orders', placed: o.order_no });
     } catch (x) { err.textContent = errMsg(x); }
