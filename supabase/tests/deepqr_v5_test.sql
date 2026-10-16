@@ -39,7 +39,7 @@ select pg_temp.put('mbezi', '00000000-0000-4000-8000-000000000509');
 update products set price = 0 where id = '00000000-0000-4000-8000-000000000703';  -- milk has no price yet
 
 set local role authenticated;
-select pg_temp.ok('database version 5', dq_version() = 5);
+select pg_temp.ok('database version 5 or later', dq_version() >= 5);
 
 -- ============ shop settings: branches and delivery by distance ============
 select pg_temp.as_user(pg_temp.c('owner'));

@@ -105,10 +105,11 @@ async function posScan(code, source, parsed) {
     Scanner.feedback(false, 'Already in the cart: ' + parsed.serial); return;
   }
   if (parsed.type === 'code') { const p = product(code); if (p) { posAddProduct(p.id, true); return; } }
+  if (isOffline) { offlineScan(code, parsed); return; }
   scanLock = true;
   try {
     const { data, error } = await sb.rpc('dq_lookup_item', { p_code: code, p_shop_id: shopId, p_device_key: deviceKey() });
-    if (error) { Scanner.feedback(false, errMsg(error)); return; }
+    if (error) { if (netDown(error)) { goOffline(); offlineScan(code, parsed); return; } Scanner.feedback(false, errMsg(error)); return; }
     if (data.kind === 'product') { posAddProduct(data.product.id, true); return; }
     if (data.reason === 'NOT_FOUND') { Scanner.feedback(false, 'Not found: ' + code + ' — check the label belongs to this business'); return; }
     if (data.reason === 'OTHER_BUSINESS') { Scanner.feedback(false, data.message); return; }
@@ -191,7 +192,9 @@ function openPayment() {
   if (!posState.cart.length) return;
   const on = posState.online;
   if (on && Object.values(on.pending || {}).some(q => q > 0)) { toast('Scan the remaining labelled items first (or choose “add without scanning”)', 'bad'); return; }
-  payState = { lines: on && on.paid ? [{ method: on.method, amount: posTotals().total, reference: on.reference }] : [{ method: 'Cash', amount: '', reference: '' }] };
+  if (isOffline && on) { toast('Online orders are completed when the internet is back', 'bad'); return; }
+  if (isOffline && posState.points) { posState.points = 0; updateCart(); }
+  payState = { ref: uid(), lines: on && on.paid ? [{ method: on.method, amount: posTotals().total, reference: on.reference }] : [{ method: 'Cash', amount: '', reference: '' }] };
   drawPayment();
 }
 function payCalc() {
@@ -206,12 +209,12 @@ function payCalc() {
 function drawPayment() {
   const c = payCalc(), cust = posState.customer;
   const methods = (business.payment_methods || ['Cash', 'M-Pesa', 'Tigo Pesa', 'Airtel Money', 'Card', 'Bank']);
-  const loyalty = business.loyalty_enabled && cust;
+  const loyalty = business.loyalty_enabled && cust && !isOffline;
   const credit = c.remaining > 0.004;
   const nonCashOver = c.nonCash > c.total + 0.004;
-  const okToSell = !nonCashOver && (!credit || (business.allow_credit_sales && cust && can('can_sell_credit')));
+  const okToSell = !nonCashOver && (!credit || (!isOffline && business.allow_credit_sales && cust && can('can_sell_credit')));
   const roundUps = [...new Set([c.total, Math.ceil(c.total / 1000) * 1000, Math.ceil(c.total / 5000) * 5000, Math.ceil(c.total / 10000) * 10000])].filter(v => v > 0).slice(0, 4);
-  modal(`<div class="cardHead"><div><h3>Take payment</h3><p>${c.items} item(s)${cust ? ' · ' + esc(cust.name) : ''}. Add one or more payments; anything unpaid becomes the customer's debt.</p></div><button class="btn ghost" onclick="closeModal()" aria-label="Close">${icon('x')}</button></div>
+  modal(`${isOffline ? `<div class="banner warn">${icon('cloudOff')}<div><b>Offline sale</b><p>Take the full amount (cash or mobile money with its reference). Credit and points need the internet. The sale uploads by itself later.</p></div></div>` : ''}<div class="cardHead"><div><h3>Take payment</h3><p>${c.items} item(s)${cust ? ' · ' + esc(cust.name) : ''}. Add one or more payments; anything unpaid becomes the customer's debt.</p></div><button class="btn ghost" onclick="closeModal()" aria-label="Close">${icon('x')}</button></div>
    <div class="dueBox ${c.remaining <= 0.004 ? 'ok' : credit && cust ? 'warn' : ''}"><div><div class="muted" style="font-size:12px;font-weight:700">TOTAL</div><div class="v">${money(c.total)}</div></div><div class="right"><div class="muted" style="font-size:12px;font-weight:700">${c.remaining > 0.004 ? 'STILL TO PAY' : 'CHANGE'}</div><div class="v">${money(c.remaining > 0.004 ? c.remaining : c.change)}</div></div></div>
    ${loyalty ? `<div class="row" style="margin-top:10px"><span>${icon('gift')} ${esc(cust.name)} has <b>${cust.points}</b> points (worth ${money(cust.points * business.point_value)})</span><span class="actions"><input class="input" id="ptsIn" type="number" min="0" max="${cust.points}" step="1" style="width:110px" value="${posState.points || ''}" placeholder="Points"><button class="btn small" onclick="posState.points=Math.min(${cust.points},Number(document.getElementById('ptsIn').value||0));if(posState.points&&posState.points<${business.min_redeem_points}){toast('Redeem at least ${business.min_redeem_points} points','bad');posState.points=0}drawPayment();updateCart()">Use</button></span></div>` : ''}
    <div style="margin-top:14px"><div class="muted" style="font-size:12px;font-weight:700;margin-bottom:6px">ADD A PAYMENT</div><div class="payGrid">${methods.map(mt => `<button type="button" onclick="payAdd('${jsq(mt)}')">${esc(mt)}</button>`).join('')}</div></div>
@@ -226,6 +229,7 @@ function payNote(c) {
   const cust = posState.customer;
   if (c.nonCash > c.total + 0.004) return `<div class="banner bad">${icon('alert')}<div><b>Mobile money, card and bank cannot be more than the total</b><p>Only cash can give change.</p></div></div>`;
   if (c.remaining > 0.004) {
+    if (isOffline) return `<div class="banner bad">${icon('alert')}<div><b>Collect ${money(c.remaining)} more</b><p>Credit sales need the internet.</p></div></div>`;
     if (!business.allow_credit_sales) return `<div class="banner bad">${icon('alert')}<div><b>Collect ${money(c.remaining)} more</b><p>Credit sales are switched off in Settings.</p></div></div>`;
     if (!can('can_sell_credit')) return `<div class="banner bad">${icon('alert')}<div><b>Collect ${money(c.remaining)} more</b><p>You are not allowed to sell on credit.</p></div></div>`;
     if (!cust) return `<div class="banner warn">${icon('user')}<div><b>${money(c.remaining)} unpaid</b><p>Choose the customer to sell on credit. <button class="btn small" onclick="openCustomerPicker((cc)=>{posState.customer={id:cc.id,name:cc.name,phone:cc.phone,points:cc.points,balance:cc.balance,credit_limit:cc.credit_limit};updateCart();drawPayment()})">Choose customer</button></p></div></div>`;
@@ -240,7 +244,7 @@ function payRefresh() {
   box.innerHTML = `<div><div class="muted" style="font-size:12px;font-weight:700">TOTAL</div><div class="v">${money(c.total)}</div></div><div class="right"><div class="muted" style="font-size:12px;font-weight:700">${c.remaining > 0.004 ? 'STILL TO PAY' : 'CHANGE'}</div><div class="v">${money(c.remaining > 0.004 ? c.remaining : c.change)}</div></div>`;
   document.getElementById('payNote').innerHTML = payNote(c);
   const credit = c.remaining > 0.004;
-  const ok = !(c.nonCash > c.total + 0.004) && (!credit || (business.allow_credit_sales && posState.customer && can('can_sell_credit')));
+  const ok = !(c.nonCash > c.total + 0.004) && (!credit || (!isOffline && business.allow_credit_sales && posState.customer && can('can_sell_credit')));
   const b = document.getElementById('paySubmit'); b.disabled = !ok; b.innerHTML = icon('check') + (credit ? 'Complete sale on credit' : 'Complete sale');
 }
 function payAdd(method) {
@@ -257,14 +261,24 @@ async function completeSale(btn) {
     const lines = [];
     posState.cart.forEach(l => { if (l.items) l.items.forEach(it => lines.push({ item_id: it.id, price: l.price })); else lines.push({ product_id: l.product_id, qty: l.qty, price: l.price }); });
     const payload = {
-      shop_id: posShopId(), lines, discount: c.disc, points_redeem: posState.points || 0, device_key: deviceKey(), shift_id: myShift?.id || null,
+      client_ref: payState.ref || uid(), shop_id: posShopId(), lines, discount: c.disc, points_redeem: posState.points || 0, device_key: deviceKey(), shift_id: myShift?.id || null,
       customer_id: posState.customer?.id || null, note: posState.note || '', date: dateOnly(), time: timeNow(),
       payments: payState.lines.filter(l => Number(l.amount) > 0).map(l => ({ method: l.method, amount: Number(l.amount), reference: (l.reference || '').trim() }))
     };
     let r;
     if (posState.online) payload.online_order_id = posState.online.id;
-    try { r = await rpc(posState.online ? 'dq_checkout3' : 'dq_checkout2', { p: payload }); }
-    catch (e) { toast(errMsg(e), 'bad'); beep(false); return; }
+    if (isOffline) r = await queueOfflineSale(payload, c);
+    else {
+      try { r = await rpc('dq_checkout4', { p: payload }); }
+      catch (e) {
+        if (netDown(e) && !posState.online) { goOffline(); r = await queueOfflineSale(payload, c); }
+        else { toast(errMsg(e), 'bad'); beep(false); return; }
+      }
+    }
+    if (r.sale?.pending) {
+      posState.cart = []; posState.discount = 0; posState.points = 0; posState.note = ''; posState.customer = null; posSave();
+      beep(true); renderView(); showReceipt(r.sale, r.lines, r.payments, null); return;
+    }
     // local cache updates
     const sale = r.sale; cache.sales.unshift(sale); cache.saleLines.push(...(r.lines || []));
     const byProd = groupBy(r.lines || [], l => l.product_id);
@@ -275,7 +289,7 @@ async function completeSale(btn) {
     if (posState.online) { toast(`Online order ${posState.online.no} completed${r.bonus_points ? ` · +${r.bonus_points} bonus points` : ''}`, 'ok'); if (cache.online) { const oo = cache.online.find(x => x.id === posState.online.id); if (oo) oo.status = 'completed'; } }
     posState.cart = []; posState.discount = 0; posState.points = 0; posState.note = ''; posState.customer = null; posState.online = null; posSave();
     beep(true); renderView(); showReceipt(sale, r.lines, r.payments, r.customer);
-    refreshRecs();
+    refreshRecs(); snapSave();
   });
 }
 
@@ -285,7 +299,7 @@ function receiptHtml(s, lines, payments, customer) {
   const groups = {}; l.forEach(x => { const k = x.product_id + '|' + x.price; (groups[k] = groups[k] || { name: x.name, price: Number(x.price), qty: 0, refunded: 0, serials: [] }); groups[k].qty += Number(x.qty); groups[k].refunded += Number(x.refunded_qty || 0); if (x.serial) groups[k].serials.push(x.serial); });
   const pays = payments || [];
   const row = (a, b, strong) => `<tr><td>${strong ? `<b>${a}</b>` : a}</td><td class="right">${strong ? `<b>${b}</b>` : b}</td></tr>`;
-  return `<div class="receipt"><div style="text-align:center">${logoMark(30)}</div><h2>${esc(business.name)}</h2><div style="text-align:center;font-size:11.5px;color:#475569">${business.receipt_header ? esc(business.receipt_header) + '<br>' : ''}${esc(shopObj(s.shop_id)?.name || '')}${business.address ? ' · ' + esc(business.address) : ''}${business.phone ? '<br>' + esc(business.phone) : ''}${business.tin ? '<br>TIN ' + esc(business.tin) : ''}</div>
+  return `<div class="receipt"><div style="text-align:center">${business.logo_url ? `<img src="${esc(business.logo_url)}" alt="" class="rcLogo">` : logoMark(30)}</div><h2>${esc(business.name)}</h2><div style="text-align:center;font-size:11.5px;color:#475569">${business.receipt_header ? esc(business.receipt_header) + '<br>' : ''}${esc(shopObj(s.shop_id)?.name || '')}${business.address ? ' · ' + esc(business.address) : ''}${business.phone ? '<br>' + esc(business.phone) : ''}${business.tin ? '<br>TIN ' + esc(business.tin) : ''}</div>
   <div class="dash"></div><table>${row('Receipt', `<span class="mono">${esc(s.receipt)}</span>`)}${row('Date', `${fmtD(s.date)} ${esc(s.time || '')}`)}${row('Cashier', esc(s.cashier_name || ''))}${row('Customer', esc(s.customer || 'Walk-in') + (s.customer_phone ? ' · ' + esc(s.customer_phone) : ''))}</table>
   <div class="dash"></div><table>${Object.values(groups).map(g => `<tr><td>${esc(g.name)}<br><span class="ser">${g.qty} × ${money(g.price)}${g.refunded ? ` · ${g.refunded} returned` : ''}${g.serials.length ? '<br>SN ' + g.serials.map(esc).join(', ') : ''}</span></td><td class="right" style="vertical-align:top">${money(g.qty * g.price)}</td></tr>`).join('')}</table>
   <div class="dash"></div><table>${row('Subtotal', money(s.subtotal))}${Number(s.tax) ? row('Tax', money(s.tax)) : ''}${Number(s.discount) ? row('Discount', '− ' + money(s.discount)) : ''}${Number(s.points_value) ? row(`Points (${s.points_redeemed})`, '− ' + money(s.points_value)) : ''}${row('TOTAL', money(s.total), true)}
@@ -294,18 +308,21 @@ function receiptHtml(s, lines, payments, customer) {
   ${s.status === 'refunded' ? '<div style="text-align:center;font-weight:800;color:#DC2626;margin-top:8px">REFUNDED</div>' : s.status === 'partially_refunded' ? '<div style="text-align:center;font-weight:800;color:#B45309;margin-top:8px">PARTLY REFUNDED</div>' : ''}
   ${customer && business.loyalty_enabled ? `<div class="dash"></div><div style="text-align:center;font-size:12px">${s.points_earned ? `+${s.points_earned} points · ` : ''}Points balance: <b>${customer.points}</b>${Number(customer.balance) > 0 ? `<br>Account balance owed: <b>${money(customer.balance)}</b>` : ''}</div>` : ''}
   ${s.note ? `<div class="dash"></div><div style="font-size:12px">${esc(s.note)}</div>` : ''}
-  <div class="dash"></div><div style="text-align:center">${business.receipt_show_qr !== false ? `<div class="qrPreview">${qrSvg('DQR|' + (business.code || '') + '|' + s.receipt + '|' + s.total, 2)}</div>` : ''}<div style="font-size:11.5px;margin-top:6px">${esc(business.receipt_footer || 'Thank you')}</div><div style="font-size:10px;color:#94A3B8;margin-top:4px">Powered by DeepQr</div></div></div>`;
+  ${s.pending ? `<div class="offStamp">${icon('cloudOff')} Saved offline · uploads when the internet is back</div>` : ''}
+  <div class="dash"></div><div style="text-align:center">${business.receipt_show_qr !== false ? `<div class="qrPreview">${qrSvg(s.public_ref ? receiptLink(s.public_ref) : 'DQR|' + (business.code || '') + '|' + s.receipt + '|' + s.total, 2)}</div>${s.public_ref ? '<div style="font-size:10.5px;color:#475569">Scan for your digital receipt</div>' : ''}` : ''}<div style="font-size:11.5px;margin-top:6px">${esc(business.receipt_footer || 'Thank you')}</div><div style="font-size:10px;color:#94A3B8;margin-top:4px">Powered by DeepQr</div></div></div>`;
 }
 function receiptText(s, lines) {
   const l = lines || cache.saleLines.filter(x => x.sale_id === s.id);
   return `${business.name}\nReceipt ${s.receipt} · ${fmtD(s.date)} ${s.time || ''}\n` + l.map(x => `${x.name} x${x.qty} = ${money(x.qty * x.price)}${x.serial ? ' (SN ' + x.serial + ')' : ''}`).join('\n') + `\nTOTAL ${money(s.total)}${Number(s.balance_due) > 0 ? `\nBalance due ${money(s.balance_due)}` : ''}\n${business.receipt_footer || 'Thank you'}`;
 }
+function receiptLink(ref) { return location.origin + location.pathname.replace(/index\.html?$/, '') + '?r=' + ref; }
 async function showReceipt(s, lines, payments, customer) {
+  if (!payments && s.pending) payments = [];
   if (!payments) { const { data } = await sb.from('sale_payments').select('*').eq('sale_id', s.id); payments = data || []; }
   if (!lines) { lines = cache.saleLines.filter(x => x.sale_id === s.id); if (!lines.length) { const { data } = await sb.from('sale_lines').select('*').eq('sale_id', s.id); lines = data || []; } }
   if (!customer && s.customer_id) customer = customerById(s.customer_id);
   const phone = phoneClean(s.customer_phone || customer?.phone || '').replace(/^0/, '255');
-  modal(`<div class="actions noPrint" style="justify-content:flex-end;margin-bottom:12px">${phone ? `<a class="btn" target="_blank" rel="noopener" href="https://wa.me/${phone}?text=${encodeURIComponent(receiptText(s, lines))}">${icon('whatsapp')}WhatsApp</a>` : ''}<button class="btn" onclick="printModal()">${icon('printer')}Print</button>${view === 'pos' ? `<button class="btn primary" onclick="closeModal()">${icon('plus')}New sale</button>` : `<button class="btn" onclick="closeModal()">Close</button>`}</div>${receiptHtml(s, lines, payments, customer)}`, 'narrow');
+  modal(`<div class="actions noPrint" style="justify-content:flex-end;margin-bottom:12px">${phone ? `<a class="btn" target="_blank" rel="noopener" href="https://wa.me/${phone}?text=${encodeURIComponent(receiptText(s, lines) + (s.public_ref ? '\n' + receiptLink(s.public_ref) : ''))}">${icon('whatsapp')}WhatsApp</a>` : ''}${s.public_ref ? `<button class="btn" onclick="copyText('${receiptLink(s.public_ref)}','Receipt link copied')">${icon('copy')}Link</button>` : ''}<button class="btn" onclick="printModal()">${icon('printer')}Print</button>${view === 'pos' ? `<button class="btn primary" onclick="closeModal()">${icon('plus')}New sale</button>` : `<button class="btn" onclick="closeModal()">Close</button>`}</div>${receiptHtml(s, lines, payments, customer)}`, 'narrow');
 }
 async function showReceiptById(id) { const s = cache.sales.find(x => x.id === id) || (await sb.from('sales').select('*').eq('id', id).single()).data; if (s) showReceipt(s); }
 
@@ -364,6 +381,8 @@ function shiftReportHtml(r, closing) {
 }
 async function closeShiftModal(shiftId) {
   const id = shiftId || myShift?.id; if (!id) return;
+  if (isOffline) { toast('Close the shift when the internet is back, so the offline sales are counted', 'bad'); return; }
+  if (outboxN > 0) { toast(`Uploading ${outboxN} offline sale(s) first…`); await syncOutbox(true); if (outboxN > 0) { toast('Some offline sales are not uploaded yet. Check the connection, then close the shift.', 'bad'); return; } }
   const r = await rpcToast('dq_shift_report', { p_shift_id: id }); if (!r) return;
   modal(`<div class="cardHead"><div><h3>Close shift</h3><p>Count the cash in the drawer and enter the total. DeepQr compares it with what should be there.</p></div><button class="btn ghost" onclick="closeModal()">${icon('x')}</button></div>${shiftReportHtml(r)}
    <form id="csF" class="formGrid" style="margin-top:14px"><div class="field"><label for="csC">Cash counted in drawer</label><input id="csC" type="number" min="0" step="any" required autofocus></div><div class="field"><label for="csN">Note (optional)</label><input id="csN"></div><button class="btn primary">${icon('lock')}Close shift</button></form>`);

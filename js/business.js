@@ -47,7 +47,7 @@ PAGES.dashboard = {
     const stockVal = sum(visibleStores(), st => sum(cache.products, p => stock(st.id, p.code) * Number(p.cost || 0)));
     const seeSales = me.role !== 'inventory' && me.role !== 'main_operator';
     if (!insights && (isMgr() || isStoreOp())) loadInsights().then(() => { if (view === 'dashboard') { const el = document.getElementById('dashSug'); if (el) el.innerHTML = dashSuggestions(); } }).catch(() => {});
-    return `${gettingStarted()}<div class="grid g4">
+    return `${conflictBanner()}${gettingStarted()}<div class="grid g4">
       ${seeSales ? kpi('cart', 'Sales today', money(net(tSales)), `${tSales.length} receipt(s) · yesterday ${money(net(ySales))}`) : kpi('box', 'Products', cache.products.filter(p => p.active !== false).length, `${cache.shops.length} location(s)`)}
       ${seeSales ? kpi('chart', 'Profit today', money(lineProfit(tSales.map(s => s.id))), 'before expenses', 'teal') : kpi('qr', 'Labelled items', num(cache.items.filter(i => i.status === 'in_stock').length), 'in stock with a QR', 'teal')}
       ${seeSales ? kpi('coins', 'Customers owe', money(owed), `${cache.customers.filter(c => Number(c.balance) > 0).length} customer(s)`, owed > 0 ? 'warn' : '') : kpi('truck', 'Open orders', cache.orders.filter(o => OPEN_ORDER.includes(o.status)).length, `${lateOrders.length} late`, lateOrders.length ? 'warn' : '')}
