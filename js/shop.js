@@ -59,26 +59,48 @@ function mountMap(elId, point, onMove, opts = {}) {
 }
 
 /* ---------------- photos: shrink on the phone, upload to the public bucket ---------------- */
-async function shrinkImage(file, max = 1200, q = 0.82) {
+/* load, optionally square-crop, shrink and auto-correct light/colour (levels stretch per channel) */
+async function processImage(file, o = {}) {
+  const { max = 1400, square = false, enhance = true, q = 0.84, aspect = 0 } = o;
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error(file.name + ' is not a photo DeepQr can read (use JPG or PNG)')); i.src = url; });
-    const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
-    const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
-    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+    let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
+    const want = square ? 1 : aspect;
+    if (want) { if (sw / sh > want) { const w2 = Math.round(sh * want); sx = Math.round((sw - w2) / 2); sw = w2; } else { const h2 = Math.round(sw / want); sy = Math.round((sh - h2) / 2); sh = h2; } }
+    const k = Math.min(1, max / Math.max(sw, sh));
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(sw * k)); c.height = Math.max(1, Math.round(sh * k));
+    const g = c.getContext('2d', { willReadFrequently: enhance }); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    g.imageSmoothingQuality = 'high'; g.drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    if (enhance) autoLevels(g, c.width, c.height);
     return await new Promise(res => c.toBlob(b => res(b), 'image/jpeg', q));
   } finally { URL.revokeObjectURL(url); }
 }
-async function uploadProductPhoto(pid, file) {
-  const blob = await shrinkImage(file);
-  const path = `p/${business.id}/${pid}/${uid()}.jpg`;
+function autoLevels(g, w, h) {
+  const d = g.getImageData(0, 0, w, h), px = d.data, hist = [new Uint32Array(256), new Uint32Array(256), new Uint32Array(256)], n = w * h;
+  for (let i = 0; i < px.length; i += 16) { hist[0][px[i]]++; hist[1][px[i + 1]]++; hist[2][px[i + 2]]++; }
+  const total = Math.ceil(px.length / 16), lo = [], hi = [];
+  for (let ch = 0; ch < 3; ch++) { let acc = 0, a = 0, b = 255; for (let v = 0; v < 256; v++) { acc += hist[ch][v]; if (acc > total * 0.006) { a = v; break; } } acc = 0; for (let v = 255; v >= 0; v--) { acc += hist[ch][v]; if (acc > total * 0.006) { b = v; break; } } lo.push(a); hi.push(b); }
+  // keep it gentle: never stretch more than ~35%, blend 75% towards the corrected value
+  const lut = [0, 1, 2].map(ch => { const a = Math.min(lo[ch], 60), b = Math.max(hi[ch], 195), t = new Uint8ClampedArray(256); for (let v = 0; v < 256; v++) { const s = (v - a) * 255 / Math.max(b - a, 1); t[v] = Math.round(v * 0.25 + s * 0.75); } return t; });
+  if (n > 0) for (let i = 0; i < px.length; i += 4) { px[i] = lut[0][px[i]]; px[i + 1] = lut[1][px[i + 1]]; px[i + 2] = lut[2][px[i + 2]]; }
+  g.putImageData(d, 0, 0);
+}
+async function uploadPublic(path, blob) {
   const { error } = await sb.storage.from(PUB_BUCKET).upload(path, blob, { contentType: 'image/jpeg', cacheControl: '31536000' });
   if (error) throw error;
   return sb.storage.from(PUB_BUCKET).getPublicUrl(path).data.publicUrl;
 }
+/* every product photo is saved twice: the full photo and a small square thumbnail (-t.jpg) for fast grids */
+async function uploadProductPhoto(pid, file, o = {}) {
+  const base = `p/${business.id}/${pid}/${uid()}`;
+  const [full, thumb] = await Promise.all([processImage(file, { max: 1400, square: !!o.square, enhance: o.enhance !== false }), processImage(file, { max: 480, square: true, enhance: o.enhance !== false, q: 0.8 })]);
+  await uploadPublic(base + '-t.jpg', thumb);
+  return uploadPublic(base + '.jpg', full);
+}
 function photoPath(url) { const i = String(url || '').indexOf('/' + PUB_BUCKET + '/'); return i < 0 ? null : decodeURIComponent(url.slice(i + PUB_BUCKET.length + 2).split('?')[0]); }
 function prodThumb(p, size = 44) {
-  return p?.image_url ? `<img class="pThumb" src="${esc(p.image_url)}" alt="" loading="lazy" style="width:${size}px;height:${size}px">`
+  return p?.image_url ? `<img class="pThumb" src="${esc(thumbOf(p.image_url))}" data-f="${esc(p.image_url)}" onerror="if(this.dataset.f&&this.src!==this.dataset.f)this.src=this.dataset.f" alt="" loading="lazy" style="width:${size}px;height:${size}px">`
     : `<span class="pThumb ph" style="width:${size}px;height:${size}px;--g:${GROUP_TONES[p?.group_code] || 'var(--primary-2)'}">${esc(String(p?.name || '?').slice(0, 2).toUpperCase())}</span>`;
 }
 
@@ -103,13 +125,14 @@ function storeHealthBanner() {
 /* =============================================================================
    Shop products page
    ============================================================================= */
-let spDraft = {}, spQ = '', spCat = '';
+let spDraft = {}, spQ = '', spCat = '', spMode = lsGet('dq_spmode') || 'cards';
 const SP_FILTERS = [['all', 'All'], ['shown', 'Visible to customers'], ['price', 'Needs a price'], ['photo', 'No photo'], ['out', 'Out of stock online'], ['hidden', 'Hidden']];
-function spVal(p, k) { return spDraft[p.id] && k in spDraft[p.id] ? spDraft[p.id][k] : k === 'featured' ? !!p.online_featured : k === 'online' ? p.online !== false : p[k]; }
+function spOrig(p, k) { return k === 'featured' ? !!p.online_featured : k === 'online' ? p.online !== false : k === 'compare_at' ? (p.compare_at_price ?? null) : p[k]; }
+function spVal(p, k) { return spDraft[p.id] && k in spDraft[p.id] ? spDraft[p.id][k] : spOrig(p, k); }
 function spSet(id, k, v) {
   const p = productById(id); spDraft[id] = spDraft[id] || {};
-  const orig = k === 'featured' ? !!p.online_featured : k === 'online' ? p.online !== false : p[k];
-  if (k === 'price') v = v === '' || v === null ? null : Number(v);
+  const orig = spOrig(p, k);
+  if (k === 'price' || k === 'compare_at') v = v === '' || v === null ? null : Number(v);
   if (String(orig ?? '') === String(v ?? '')) delete spDraft[id][k]; else spDraft[id][k] = v;
   if (!Object.keys(spDraft[id]).length) delete spDraft[id];
   spSaveBar();
@@ -148,22 +171,58 @@ PAGES.shopprod = {
      <div class="card"><div class="toolbar" style="margin:0"><input class="input grow" id="spQ" value="${esc(spQ)}" placeholder="Search name, code or barcode…" oninput="spQ=this.value;const p=this.selectionStart;renderView();const e=document.getElementById('spQ');e.focus();e.setSelectionRange(p,p)">
        <select class="input" onchange="spCat=this.value;renderView()"><option value="">All categories</option>${cats.map(c => `<option ${spCat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></div>
       <div class="pillRow" style="margin:12px 0 0">${SP_FILTERS.map(([k, lb]) => `<button class="pill ${f === k ? 'active' : ''}" onclick="setTab('f','${k}')">${lb} <small>${all.filter(p => spMatches(p, k)).length}</small></button>`).join('')}</div>
-      ${list.length > 1 ? `<div class="actions" style="margin-top:10px"><button class="btn small ghost" onclick="spBulk('online',true)">${icon('eye')}Show these ${list.length}</button><button class="btn small ghost" onclick="spBulk('online',false)">${icon('ban')}Hide these ${list.length}</button></div>` : ''}</div>
-     <div class="spGrid">${list.map(spCard).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('tag', 'Nothing here', f === 'price' ? 'Every product shown in your shop has a price.' : 'Try another filter or search.')}</div>`}</div>
+      <div class="spTools"><div class="seg" role="group" aria-label="View"><button class="${spMode === 'cards' ? 'active' : ''}" onclick="spMode='cards';lsSet('dq_spmode','cards');renderView()">${icon('image')}Photos</button><button class="${spMode === 'list' ? 'active' : ''}" id="spListBtn" onclick="spMode='list';lsSet('dq_spmode','list');renderView()">${icon('edit')}Fast price list</button></div>
+       ${list.length > 1 ? `<button class="btn small ghost" onclick="spBulk('online',true)">${icon('eye')}Show these ${list.length}</button><button class="btn small ghost" onclick="spBulk('online',false)">${icon('ban')}Hide these ${list.length}</button>` : ''}${canPrice ? `<button class="btn small ghost" onclick="spMarkup()">${icon('coins')}Price from cost</button>` : ''}<span class="muted spScanHint">${icon('scan')} Scan a label or barcode to jump to that product</span></div></div>
+     ${spMode === 'list' ? spListHtml(list, canPrice) : `<div class="spGrid">${list.map(spCard).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('tag', 'Nothing here', f === 'price' ? 'Every product shown in your shop has a price.' : 'Try another filter or search.')}</div>`}</div>`}
      <div id="spSave"></div>`;
   },
-  after: () => { window.__spList = null; spSaveBar(); }
+  after: () => { window.__spList = null; spSaveBar(); Scanner.pushHandler('shopprod', spScan); }
 };
 function spCard(p) {
   const on = spVal(p, 'online'), price = spVal(p, 'price'), fe = spVal(p, 'featured'), s = onlineStock(p), dirty = !!spDraft[p.id];
   const state = !on ? ['Hidden', 'gray'] : !(Number(price) > 0) ? ['Needs a price', 'warn'] : s <= 0 ? ['Out of stock online', 'warn'] : ['Visible', 'ok'];
   const canPrice = isMgr() || perms.can_edit_price;
   return `<div class="spCard ${on ? '' : 'off'} ${dirty ? 'dirty' : ''}" id="sp_${p.id}">
-    <button class="spPhoto" onclick="spPhotos('${p.id}')" aria-label="Photos of ${esc(p.name)}">${p.image_url ? `<img src="${esc(p.image_url)}" alt="" loading="lazy">${(p.photos || []).length > 1 ? `<i class="spCount">${(p.photos || []).length}</i>` : ''}` : `<span class="spAdd">${icon('camera')}<b>Add photo</b></span>`}</button>
+    <button class="spPhoto" onclick="spPhotos('${p.id}')" aria-label="Photos of ${esc(p.name)}">${p.image_url ? `${imgTag(p.image_url, '')}${(p.photos || []).length > 1 ? `<i class="spCount">${(p.photos || []).length}</i>` : ''}` : `<span class="spAdd">${icon('camera')}<b>Add photo</b></span>`}</button>
     <div class="spBody"><div class="spTop"><span class="tag ${state[1]}">${state[0]}</span><button class="spStar ${fe ? 'on' : ''}" onclick="spSet('${p.id}','featured',${!fe});renderView()" title="${fe ? 'Popular — shown first' : 'Mark as popular (shown first)'}" aria-pressed="${fe}">${icon('star')}</button></div>
      <b class="spName">${esc(p.name)}</b><small class="muted">${esc(p.code)}${p.category ? ' · ' + esc(p.category) : ''}${p.pack_size ? ' · ' + esc(p.pack_size) : ''}</small>
      <div class="spPrice"><input class="input num" type="number" min="0" step="any" inputmode="decimal" value="${price ?? ''}" placeholder="Price" aria-label="Price of ${esc(p.name)}" ${canPrice ? '' : 'disabled title="You cannot change prices"'} onchange="spSet('${p.id}','price',this.value);renderView()"><span class="muted">${esc(cur())}</span></div>
+     <details class="spWas" ${spVal(p, 'compare_at') ? 'open' : ''}><summary>${spVal(p, 'compare_at') ? `${icon('tag')} Deal: was ${money(spVal(p, 'compare_at'))}` : `${icon('tag')} Make it a deal`}</summary><input class="input num" type="number" min="0" step="any" inputmode="decimal" value="${spVal(p, 'compare_at') ?? ''}" placeholder="Old price (higher)" aria-label="Was price of ${esc(p.name)}" ${canPrice ? '' : 'disabled'} onchange="spSet('${p.id}','compare_at',this.value);renderView()"></details>
      <div class="spFoot"><small class="${s > 0 ? '' : 'warn'}">${s > 0 ? num(s) + ' in stock online' : 'No stock at online branches'}</small><label class="switch"><input type="checkbox" ${on ? 'checked' : ''} onchange="spSet('${p.id}','online',this.checked);renderView()"><i></i><span>Show</span></label></div></div></div>`;
+}
+function spListHtml(list, canPrice) {
+  return `<div class="card"><p class="muted" style="margin:0 0 10px;font-size:13px">${icon('keyboard')} Type a price and press <b>Enter</b> to jump to the next product. Changes are kept until you press <b>Save changes</b>.</p>
+   <div class="tableWrap"><table class="spList"><thead><tr><th>Product</th><th class="right">Stock online</th><th style="width:150px">Price (${esc(cur())})</th><th style="width:140px">Was (deal)</th><th>Show</th></tr></thead><tbody>
+   ${list.map((p, i) => { const on = spVal(p, 'online'), pr = spVal(p, 'price'), st = onlineStock(p); return `<tr id="spr_${p.id}" class="${spDraft[p.id] ? 'dirty' : ''} ${on ? '' : 'off'}"><td><div class="prodCell">${prodThumb(p, 36)}<div><b>${esc(p.name)}</b><span class="sub">${esc(p.code)}${p.barcode ? ' · ' + esc(p.barcode) : ''}${Number(p.cost) ? ' · cost ' + money(p.cost) : ''}</span></div></div></td>
+     <td class="right num ${st > 0 ? '' : 'warn'}">${num(st)}</td>
+     <td><input class="input num spIn" data-i="${i}" type="number" min="0" step="any" inputmode="decimal" value="${pr ?? ''}" placeholder="—" ${canPrice ? '' : 'disabled'} onchange="spSet('${p.id}','price',this.value);this.closest('tr').classList.toggle('dirty',!!spDraft['${p.id}'])" onkeydown="spKey(event,this)" aria-label="Price of ${esc(p.name)}"></td>
+     <td><input class="input num" type="number" min="0" step="any" value="${spVal(p, 'compare_at') ?? ''}" placeholder="—" ${canPrice ? '' : 'disabled'} onchange="spSet('${p.id}','compare_at',this.value);this.closest('tr').classList.toggle('dirty',!!spDraft['${p.id}'])" aria-label="Was price of ${esc(p.name)}"></td>
+     <td><label class="switch"><input type="checkbox" ${on ? 'checked' : ''} onchange="spSet('${p.id}','online',this.checked);this.closest('tr').classList.toggle('off',!this.checked)"><i></i></label></td></tr>`; }).join('') || `<tr><td colspan="5" class="empty">Nothing here.</td></tr>`}</tbody></table></div></div>`;
+}
+function spKey(e, el) {
+  if (e.key !== 'Enter' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  e.preventDefault(); el.dispatchEvent(new Event('change'));
+  const all = [...document.querySelectorAll('.spIn')], i = all.indexOf(el), nx = all[e.key === 'ArrowUp' ? i - 1 : i + 1];
+  if (nx) { nx.focus(); nx.select(); } else spSaveBar();
+}
+function spScan(code, src, parsed) {
+  let p = (parsed.type === 'qr' || parsed.type === 'serial') ? productById(cache.items.find(i => i.serial === parsed.serial)?.product_id) : product(code);
+  if (!p) { Scanner.feedback(false, 'No product found for ' + code); return; }
+  spQ = ''; spCat = ''; viewParams.f = 'all'; spMode = 'list'; renderView();
+  const row = document.getElementById('spr_' + p.id); if (!row) return;
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' }); row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 1600);
+  const inp = row.querySelector('.spIn'); if (inp && !inp.disabled) { inp.focus(); inp.select(); }
+  Scanner.feedback(true, `${p.name} — type the price`);
+}
+function spMarkup() {
+  const withCost = cache.products.filter(p => p.active !== false && Number(p.cost) > 0);
+  if (!withCost.length) { toast('No product has a cost yet. Costs come from purchase orders and the product editor.', 'bad'); return; }
+  askBox('Set prices from the cost', `${withCost.length} product(s) have a cost. DeepQr adds your margin and rounds the price up. You can still change each price before saving.`, { label: 'Margin on top of the cost (%)', type: 'number', min: 0, value: lsGet('dq_markup') || '30', required: true }, 'Fill prices', (v, b) => {
+    const m = Number(v); lsSet('dq_markup', String(m)); let n = 0;
+    withCost.forEach(p => { if (Number(spVal(p, 'price')) > 0 && !document.getElementById('mkAll')?.checked) return; const raw = Number(p.cost) * (1 + m / 100), step = raw >= 10000 ? 500 : raw >= 1000 ? 100 : 50; spSet(p.id, 'price', Math.ceil(raw / step) * step); n++; });
+    closeModal(); renderView(); toast(`${n} price${n === 1 ? '' : 's'} filled in — check them, then Save changes`, n ? 'ok' : '');
+  });
+  setTimeout(() => { const f = document.getElementById('askV')?.closest('.field'); if (f) f.insertAdjacentHTML('afterend', `<label class="chk" style="margin-top:8px"><input type="checkbox" id="mkAll"> Also replace prices that are already set</label>`); }, 30);
 }
 function spBulk(k, v) { const f = viewParams.f || 'all'; cache.products.filter(p => p.active !== false && spMatches(p, f) && (!spCat || (p.category || 'Other') === spCat) && (!spQ || (p.name + ' ' + p.code).toLowerCase().includes(spQ.toLowerCase()))).forEach(p => spSet(p.id, k, v)); renderView(); }
 async function spSuggestPrices(btn) {
@@ -195,7 +254,7 @@ async function spSave(btn) {
 let ppState = null;
 function spPhotos(id) {
   const p = productById(id); if (!p) return;
-  ppState = { id, photos: [...(p.photos || [])], adds: [], removed: [], desc: p.description || '' };
+  ppState = { id, photos: [...(p.photos || [])], adds: [], removed: [], desc: p.description || '', enhance: lsGet('dq_pp_enh') !== '0', square: lsGet('dq_pp_sq') === '1' };
   drawPhotos();
 }
 function drawPhotos() {
@@ -203,6 +262,9 @@ function drawPhotos() {
   modal(`<div class="cardHead"><div><h3>${icon('camera')} ${esc(p.name)}</h3><p>Up to 6 photos. The first one is shown in your shop. Photos are made smaller automatically so they load fast on phones.</p></div><button class="btn ghost" onclick="closeModal()">${icon('x')}</button></div>
    <div class="ppGrid">${all.map((x, i) => `<div class="ppItem ${i === 0 ? 'main' : ''}"><img src="${esc(x.u)}" alt="">${i === 0 ? '<span class="tag ok">Main photo</span>' : `<button class="btn small" onclick="ppMain(${i})">Make main</button>`}<button class="ppDel" onclick="ppDel(${i})" aria-label="Remove photo">${icon('trash')}</button></div>`).join('')}
     ${all.length < 6 ? `<label class="ppAddBtn">${icon('camera')}<b>Take photo</b><small>uses the camera</small><input type="file" accept="image/*" capture="environment" onchange="ppAdd(this.files)" hidden></label><label class="ppAddBtn">${icon('upload')}<b>Choose photos</b><small>from the gallery or computer</small><input type="file" accept="image/*" multiple onchange="ppAdd(this.files)" hidden id="ppFile"></label>` : ''}</div>
+   <div class="ppOpts"><label class="switch"><input type="checkbox" id="ppEnh" ${ppState.enhance ? 'checked' : ''} onchange="ppState.enhance=this.checked;lsSet('dq_pp_enh',this.checked?'1':'0')"><i></i><span>Improve light &amp; colour automatically</span></label>
+    <label class="switch"><input type="checkbox" id="ppSq" ${ppState.square ? 'checked' : ''} onchange="ppState.square=this.checked;lsSet('dq_pp_sq',this.checked?'1':'0')"><i></i><span>Crop to a square (fills the shop tile)</span></label></div>
+   <p class="ppTips">${icon('info')} For photos that sell: daylight or a bright room, a plain light background, the whole product in the middle, one product per photo.</p>
    <div class="field" style="margin-top:14px"><label for="ppD">Description for customers</label><textarea id="ppD" rows="3" maxlength="1000" placeholder="Size, colour, what is in the pack, how to use…" oninput="ppState.desc=this.value">${esc(ppState.desc)}</textarea></div>
    <div id="ppErr" class="bad" style="min-height:20px;margin-top:8px"></div>
    <div class="actions"><button class="btn primary" id="ppSave" onclick="ppSave(this)">${icon('check')}Save photos</button><button class="btn ghost" onclick="closeModal()">Cancel</button></div>`, 'wide');
@@ -220,11 +282,11 @@ async function ppSave(btn) {
   await withBusy(btn, async () => {
     try {
       const urls = [];
-      for (const a of ppState.adds) { btn.lastChild && (btn.lastChild.textContent = ` Uploading ${urls.length + 1}/${ppState.adds.length}…`); urls.push(await uploadProductPhoto(ppState.id, a.file)); }
+      for (const a of ppState.adds) urls.push(await uploadProductPhoto(ppState.id, a.file, { enhance: ppState.enhance, square: ppState.square }));
       const photos = ppState.addsFirst ? [...urls, ...ppState.photos] : [...ppState.photos, ...urls];
       const r = await rpc('dq_store_products_save', { p: { items: [{ id: ppState.id, photos, description: ppState.desc }] } });
       const p = productById(ppState.id); if (p && r?.[0]) Object.assign(p, r[0]);
-      const rm = ppState.removed.map(photoPath).filter(Boolean); if (rm.length) sb.storage.from(PUB_BUCKET).remove(rm);
+      const rm = ppState.removed.flatMap(u => [photoPath(u), photoPath(thumbOf(u))]).filter(Boolean); if (rm.length) sb.storage.from(PUB_BUCKET).remove([...new Set(rm)]);
       closeModal(); toast('Photos saved', 'ok'); render();
     } catch (x) { er.textContent = errMsg(x); }
   });
@@ -266,6 +328,10 @@ PAGES.shopsetup = {
     return `<div class="ssSteps">${steps.map(([ok, t]) => `<div class="${ok ? 'ok' : ''}">${icon(ok ? 'check' : 'alert')}<span>${t}</span></div>`).join('')}${st.sellable < st.all ? `<button class="btn small" onclick="go('shopprod')">${icon('tag')}Add prices &amp; photos</button>` : ''}</div>
      <div class="ssGrid"><div>
       <section class="card"><div class="cardHead"><div><h3>${icon('store')} Your shop</h3><p>The link customers open, and what they see first.</p></div></div>
+       <div class="brandBox"><div class="brandCover ${business.store_cover_url ? '' : 'empty'}">${business.store_cover_url ? `<img src="${esc(business.store_cover_url)}" alt="">` : `<span>${icon('image')}Cover photo · wide picture of your shop or products</span>`}
+         <label class="btn small brandBtn">${icon('camera')}${business.store_cover_url ? 'Change cover' : 'Add cover'}<input type="file" accept="image/*" hidden onchange="ssBrand('store_cover_url',this.files[0],this)"></label></div>
+        <div class="brandLogo">${shopLogoHtml(business.name, business.logo_url, 'lg')}<label class="btn small">${icon('upload')}${business.logo_url ? 'Change logo' : 'Add logo'}<input type="file" accept="image/*" hidden id="ssLogoFile" onchange="ssBrand('logo_url',this.files[0],this)"></label>${business.logo_url || business.store_cover_url ? `<button class="btn small ghost" onclick="ssBrandClear()">Remove</button>` : ''}</div>
+        <small class="muted">Your logo also appears on receipts and digital receipts.</small></div>
        <label class="switchRow big"><span class="switch"><input type="checkbox" id="ssOn" ${d.store_enabled ? 'checked' : ''} onchange="ssSet('store_enabled',this.checked,true)"><i></i></span><span><b>${d.store_enabled ? 'Open for online orders' : 'Closed'}</b><br><small class="muted">${d.store_enabled ? 'Customers can find and order from your shop.' : 'Customers see that the shop is not taking orders.'}</small></span></label>
        <div class="formGrid" style="margin-top:12px"><div class="field"><label for="ssSlug">Shop link</label><div class="slugBox"><span>?shop=</span><input id="ssSlug" class="mono" value="${esc(d.store_slug)}" oninput="ssDraft.store_slug=this.value.toLowerCase().replace(/[^a-z0-9-]+/g,'-')"></div><small class="muted"><button class="priceBtn" onclick="copyText('${jsq(link)}','Shop link copied')">${icon('copy')}Copy link</button></small></div>
         <div class="field"><label for="ssTag">Short description</label><input id="ssTag" value="${esc(d.store_tagline)}" maxlength="120" placeholder="e.g. Fresh groceries &amp; household goods" oninput="ssDraft.store_tagline=this.value"></div>
@@ -302,6 +368,19 @@ PAGES.shopsetup = {
      <div class="saveBar show sticky"><span id="ssErr" class="bad"></span><span class="actions" style="flex-wrap:nowrap"><button class="btn ghost" onclick="ssDraft=null;renderView()">Undo changes</button><button class="btn primary lg" id="ssSave" onclick="ssSave(this)">${icon('check')}Save shop</button></span></div>`;
   }
 };
+async function ssBrand(k, file, inp) {
+  if (!file) return;
+  const lab = inp.closest('label'); lab?.classList.add('busy');
+  try {
+    const blob = await processImage(file, k === 'logo_url' ? { max: 512, square: true, enhance: true } : { max: 1800, aspect: 3, enhance: true });
+    const url = await uploadPublic(`p/${business.id}/brand/${k === 'logo_url' ? 'logo' : 'cover'}-${uid()}.jpg`, blob);
+    const old = business[k];
+    const r = await rpc('dq_store_branding', { p: { [k]: url } });
+    business = { ...business, ...r }; if (old && photoPath(old)) sb.storage.from(PUB_BUCKET).remove([photoPath(old)]);
+    toast(k === 'logo_url' ? 'Logo saved' : 'Cover photo saved', 'ok'); render();
+  } catch (x) { toast(errMsg(x), 'bad'); } finally { lab?.classList.remove('busy'); }
+}
+function ssBrandClear() { confirmBox('Remove the logo and cover photo?', 'Your shop shows its initials and a plain banner instead.', 'Remove', async b => { await withBusy(b, async () => { const r = await rpcToast('dq_store_branding', { p: { logo_url: '', store_cover_url: '' } }, 'Removed'); if (r) { business = { ...business, ...r }; closeModal(); render(); } }); }, 'danger'); }
 function ssMap(i) {
   const b = ssDraft.branches[i]; let pt = b.lat != null ? { lat: b.lat, lng: b.lng } : null;
   modal(`<div class="cardHead"><div><h3>${icon('pin')} Where is ${esc(b.name)}?</h3><p>Stand in the branch and tap <b>Use my location here</b>, or drag the pin to the right place.</p></div><button class="btn ghost" onclick="closeModal()">${icon('x')}</button></div>

@@ -4,6 +4,16 @@
    ============================================================================= */
 const OO_TABS = [['new', 'New', ['placed']], ['progress', 'In progress', ['accepted', 'preparing', 'ready', 'out_for_delivery']], ['done', 'Completed', ['completed']], ['closed', 'Cancelled', ['cancelled', 'rejected']]];
 let ooTimer = null, ooSeen = null;
+async function loadReviews() { const { data } = await sb.from('store_reviews').select('*').order('created_at', { ascending: false }).limit(200); cache.reviews = data || []; }
+function reviewsView() {
+  if (!cache.reviews) { loadReviews().then(() => view === 'online' && renderView()); return `<div class="card"><div class="empty"><span class="spinner"></span></div></div>`; }
+  const l = cache.reviews, avg = l.length ? sum(l.filter(r => !r.hidden), 'rating') / Math.max(1, l.filter(r => !r.hidden).length) : 0;
+  return `<div class="card"><div class="cardHead"><div><h3>${icon('star')} What customers say</h3><p>Only customers with a completed online order can review. A kind, quick reply builds trust; hide a review only if it is abusive.</p></div>${l.length ? `<div class="rvBig">${ratingLine({ avg, count: l.filter(r => !r.hidden).length })}</div>` : ''}</div>
+   ${l.map(r => { const o = (cache.online || []).find(x => x.id === r.order_id); return `<div class="review ${r.hidden ? 'off' : ''}"><div class="row" style="border:0;padding:0"><span><b>${esc(o?.customer_name || 'Customer')}</b> ${stars(r.rating, 'sm')} <span class="mono muted" style="font-size:12px">${esc(o?.order_no || '')}</span>${r.hidden ? ' <span class="tag gray">Hidden</span>' : ''}</span><small class="muted">${fmtD(r.created_at)}</small></div>
+     ${r.comment ? `<p>${esc(r.comment)}</p>` : '<p class="muted">No comment.</p>'}${r.reply ? `<div class="rvReply"><b>Your reply</b> ${esc(r.reply)}</div>` : ''}
+     <div class="actions"><button class="btn small ${r.reply ? 'ghost' : 'primary'}" onclick="askBox('Reply to ${esc(jsq(o?.customer_name || 'the customer'))}','Your reply is shown under the review in your shop.',{label:'Reply',textarea:true,required:true,value:'${esc(jsq(r.reply || ''))}'},'Send reply',(v,b)=>rvReply('${r.id}',v,null,b))">${icon('edit')}${r.reply ? 'Edit reply' : 'Reply'}</button><button class="btn small ghost" onclick="rvReply('${r.id}',null,${!r.hidden},this)">${r.hidden ? 'Show again' : 'Hide'}</button></div></div>`; }).join('') || emptyState('star', 'No reviews yet', 'After an online order is completed, the customer can rate your shop from their phone.')}</div>`;
+}
+async function rvReply(id, reply, hidden, btn) { await withBusy(btn, async () => { const r = await rpcToast('dq_review_reply', { p_id: id, p_reply: reply, p_hidden: hidden }, reply != null ? 'Reply posted' : hidden ? 'Review hidden' : 'Review shown'); if (r) { closeModal(); const i = cache.reviews.findIndex(x => x.id === id); if (i >= 0) cache.reviews[i] = r; renderView(); } }); }
 async function loadOnlineOrders() {
   const { data } = await sb.from('online_orders').select('*').order('created_at', { ascending: false }).limit(300);
   cache.online = data || []; cache.onlineAt = Date.now();
@@ -32,11 +42,11 @@ PAGES.online = {
     if (!business.store_enabled && !cache.online.length) return storeIntro();
     const tab = viewParams.tab || 'new';
     const mine = cache.online.filter(o => me.role !== 'cashier' || !o.shop_id || o.shop_id === me.shop_id);
-    const list = mine.filter(o => OO_TABS.find(t => t[0] === tab)[2].includes(o.status));
+    const list = tab === 'reviews' ? [] : mine.filter(o => OO_TABS.find(t => t[0] === tab)[2].includes(o.status));
     const unver = mine.filter(o => o.payment_status === 'pending_verification' && !['cancelled', 'rejected'].includes(o.status));
     return `${storeHealthBanner()}<div class="grid g4">${kpi('cart', 'New orders', mine.filter(o => o.status === 'placed').length, 'accept or decline', mine.some(o => o.status === 'placed') ? 'warn' : '')}${kpi('clock', 'In progress', mine.filter(o => OO_TABS[1][2].includes(o.status)).length)}${kpi('shield', 'Payments to verify', unver.length, money(sum(unver, 'total')), unver.length ? 'warn' : 'teal')}${kpi('chart', 'Online sales (30 days)', money(sum(mine.filter(o => o.status === 'completed' && o.created_at >= addDays(-29)), 'total')), `${mine.filter(o => o.status === 'completed').length} completed`)}</div>
-     <div style="margin-top:16px">${tabbar('ooTabs', OO_TABS.map(t => [t[0], t[1], t[0] === 'new' ? 'bolt' : t[0] === 'progress' ? 'clock' : t[0] === 'done' ? 'check' : 'x', mine.filter(o => t[2].includes(o.status)).length || '', t[0] === 'new']), tab, 'ooTab')}</div>
-     <div class="ooGrid">${list.map(ooCard).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('cart', tab === 'new' ? 'No new orders' : 'Nothing here', tab === 'new' ? 'New orders appear here with a sound. Share your shop link so customers can order.' : '')}</div>`}</div>`;
+     <div style="margin-top:16px">${tabbar('ooTabs', OO_TABS.map(t => [t[0], t[1], t[0] === 'new' ? 'bolt' : t[0] === 'progress' ? 'clock' : t[0] === 'done' ? 'check' : 'x', mine.filter(o => t[2].includes(o.status)).length || '', t[0] === 'new']).concat(isMgr() ? [['reviews', 'Reviews', 'star', (cache.reviews || []).filter(r => !r.reply).length || '']] : []), tab, 'ooTab')}</div>
+     ${tab === 'reviews' ? reviewsView() : ''}<div class="ooGrid ${tab === 'reviews' ? 'hidden' : ''}">${list.map(ooCard).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('cart', tab === 'new' ? 'No new orders' : 'Nothing here', tab === 'new' ? 'New orders appear here with a sound. Share your shop link so customers can order.' : '')}</div>`}</div>`;
   },
   after: () => { ooSeen = (cache.online || []).filter(o => o.status === 'placed').length; }
 };

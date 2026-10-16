@@ -59,7 +59,7 @@ def route(r):
 
 errors = []
 def new_page(browser, w=1360, h=900):
-    ctx = browser.new_context(viewport={'width': w, 'height': h})
+    ctx = browser.new_context(viewport={'width': w, 'height': h}, service_workers='block')
     ctx.route('**/*', route)
     pg = ctx.new_page()
     pg.on('pageerror', lambda e: errors.append(str(e)))

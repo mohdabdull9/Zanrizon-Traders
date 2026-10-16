@@ -56,7 +56,9 @@ with sync_playwright() as p:
           and sql(f"select description from products where id='{DELL}'").startswith('12-inch laptop'), url)
     resp = ow.request.get(url)
     w = Image.open(io.BytesIO(resp.body())).size[0] if resp.ok else 0
-    check('photo is public and resized for phones', resp.ok and resp.headers.get('content-type', '').startswith('image/jpeg') and w <= 1200, (resp.status, w))
+    tresp = ow.request.get(url.replace('.jpg', '-t.jpg'))
+    tw = Image.open(io.BytesIO(tresp.body())).size if tresp.ok else (0, 0)
+    check('photo is public and resized for phones, with a square thumbnail', resp.ok and resp.headers.get('content-type', '').startswith('image/jpeg') and w <= 1400 and tw[0] == tw[1] and tw[0] <= 480, (resp.status, w, tw))
     check('shop products card shows the photo', ow.is_visible(f'#sp_{DELL} .spPhoto img'))
     shot(ow, '64-shop-products')
     goto(ow, 'products'); ow.wait_for_timeout(500)

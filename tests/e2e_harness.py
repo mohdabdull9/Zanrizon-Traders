@@ -49,6 +49,7 @@ def route(r):
 
 errors = []
 def new_page(browser, w=1360, h=900, **ctx_opts):
+    ctx_opts.setdefault('service_workers', 'block')   # the offline test opts in explicitly
     ctx = browser.new_context(viewport={'width': w, 'height': h}, **ctx_opts)
     ctx.route('**/*', route)
     pg = ctx.new_page()
@@ -71,7 +72,7 @@ def toast_text(pg):
     return pg.inner_text('#toast') if pg.is_visible('#toast') else ''
 
 def shot(pg, name):
-    pg.screenshot(path=os.path.join(SHOTS, name + '.png'), full_page=False)
+    pg.wait_for_timeout(350); pg.screenshot(path=os.path.join(SHOTS, name + '.png'), full_page=False)
 
 def scan_keys(pg, text, delay=8):
     """type like a keyboard-wedge scanner: fast keystrokes then Enter"""

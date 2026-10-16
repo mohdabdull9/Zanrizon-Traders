@@ -6,7 +6,7 @@
    ============================================================================= */
 let pub = null;               // { view, params } when a public / shopper page is shown
 let supplierAcc = null, customerAcc = null, adminRole = null, supData = null;
-const PUBLIC_VIEWS = ['shops', 'store', 'verify', 'c_home'];
+const PUBLIC_VIEWS = ['shops', 'store', 'verify', 'c_home', 'receipt'];
 function inPublic() { return !!pub || (!!customerAcc && !me && !isAdmin && !supplierAcc); }
 function shopperEmail(phone) { let d = String(phone || '').replace(/\D/g, ''); if (d.startsWith('0')) d = '255' + d.slice(1); return `c${d}@shoppers.deepqr.local`; }
 function looksLikePhone(v) { return /^[+0-9][0-9 ()-]{8,}$/.test(String(v || '').trim()) && String(v).replace(/\D/g, '').length >= 9; }
@@ -16,6 +16,7 @@ function pubUrl(v, params = {}) {
   if (v === 'shops') return `${base}?shops`;
   if (v === 'c_home') return `${base}?me`;
   if (v === 'verify') return `${base}?dq=${encodeURIComponent(params.code || '')}`;
+  if (v === 'receipt') return `${base}?r=${encodeURIComponent(params.ref || '')}`;
   return base;
 }
 function goPublic(v, params = {}) {
@@ -27,6 +28,7 @@ function leavePublic() { pub = null; try { history.replaceState(null, '', locati
 function readPublicRoute() {
   const u = new URLSearchParams(location.search);
   if (u.get('dq')) return { view: 'verify', params: { code: location.href } };
+  if (u.get('r')) return { view: 'receipt', params: { ref: u.get('r') } };
   if (u.get('shop')) return { view: 'store', params: { slug: u.get('shop') } };
   if (u.has('shops')) return { view: 'shops', params: {} };
   if (u.has('me')) return { view: 'c_home', params: {} };
@@ -67,16 +69,46 @@ PAGES.verify = {
 function verifyScanBox() { return `<div class="card"><form class="searchLine" onsubmit="event.preventDefault();goPublic('verify',{code:document.getElementById('vfIn').value})" style="margin:0"><input class="input mono" id="vfIn" placeholder="Type a serial or paste a label link"><button class="btn">${icon('search')}Check</button></form></div>`; }
 function sellScanned(code) { pub = null; try { history.replaceState(null, '', location.pathname); } catch (e) {} go('pos'); setTimeout(() => Scanner.emit(code, 'link'), 400); }
 
+/* ---------------- public: digital receipt (the QR on every receipt) ---------------- */
+PAGES.receipt = {
+  title: 'Receipt', sub: '', noHead: true,
+  render: () => {
+    if (!viewParams.r) { sb.rpc('dq_public_receipt', { p_ref: viewParams.ref }).then(({ data, error }) => { viewParams.r = error ? { found: false, err: errMsg(error) } : data; if (view === 'receipt') renderView(); }); return `<div class="skelCard receipt skel"></div>`; }
+    const r = viewParams.r;
+    if (!r.found) return `<div class="dReceipt"><div class="drHead plain">${icon('cloudOff')}<div><h2>Receipt not uploaded yet</h2><p>If this shop sold to you offline, the receipt appears here as soon as their till is back online. Try again later.</p></div></div><div class="actions" style="justify-content:center;padding:16px"><button class="btn primary" onclick="viewParams.r=null;renderView()">${icon('refund')}Try again</button></div></div>`;
+    const b = r.business, x = r.sale, c = b.currency, refunded = x.status === 'refunded';
+    document.title = 'Receipt ' + x.receipt + ' · ' + b.name;
+    return `<div class="dReceipt"><div class="drHead">${shopLogoHtml(b.name, b.logo, 'lg')}<div><small>Receipt from</small><h2>${esc(b.name)}</h2><p>${esc([r.shop, b.address, b.phone].filter(Boolean).join(' · '))}</p></div></div>
+     <div class="drStamp ${refunded ? 'bad' : 'ok'}">${icon(refunded ? 'refund' : 'shield')}<div><b>${refunded ? 'Refunded purchase' : 'Verified purchase'}</b><small>${refunded ? 'The shop refunded this sale.' : 'Recorded in DeepQr by the shop' + (x.offline ? ' (sold offline, uploaded later)' : '')}.</small></div></div>
+     <dl class="drMeta"><div><dt>Receipt</dt><dd class="mono">${esc(x.receipt)}</dd></div><div><dt>Date</dt><dd>${fmtD(x.date)} ${esc(x.time || '')}</dd></div>${x.cashier ? `<div><dt>Served by</dt><dd>${esc(x.cashier)}</dd></div>` : ''}${x.customer ? `<div><dt>Customer</dt><dd>${esc(x.customer)}</dd></div>` : ''}</dl>
+     <div class="drLines">${r.lines.map(l => `<div class="drLine">${l.image ? imgTag(l.image, l.name) : `<span class="noImg sm">${esc(String(l.name || '?').slice(0, 1))}</span>`}<div style="flex:1;min-width:0"><b>${esc(l.name)}</b><small class="muted">${num(l.qty)} × ${money(l.price, c)}${Number(l.refunded) ? ` · ${num(l.refunded)} returned` : ''}</small>${l.serial ? `<button class="priceBtn drSerial" onclick="goPublic('verify',{code:'DQ1|${jsq(b.code)}|S00|X|${jsq(l.serial)}'})">${icon('qr')}Serial ${esc(l.serial)} · check label</button>` : ''}</div><b class="num">${money(l.qty * l.price, c)}</b></div>`).join('')}</div>
+     <div class="drTotals"><div><span>Subtotal</span><b>${money(x.subtotal, c)}</b></div>${Number(x.tax) ? `<div><span>Tax</span><b>${money(x.tax, c)}</b></div>` : ''}${Number(x.discount) ? `<div><span>Discount</span><b>− ${money(x.discount, c)}</b></div>` : ''}${Number(x.points_value) ? `<div><span>Points used</span><b>− ${money(x.points_value, c)}</b></div>` : ''}${Number(x.delivery_fee) ? `<div><span>Delivery</span><b>${money(x.delivery_fee, c)}</b></div>` : ''}
+      <div class="grand"><span>Total</span><b>${money(x.total, c)}</b></div>${r.payments.filter(p => p.kind !== 'refund').map(p => `<div class="muted"><span>Paid · ${esc(p.method)}</span><b>${money(p.amount, c)}</b></div>`).join('')}${Number(x.balance_due) > 0 ? `<div class="warn"><span>Balance due</span><b>${money(x.balance_due, c)}</b></div>` : ''}${Number(x.refunded) > 0 ? `<div class="bad"><span>Refunded</span><b>− ${money(x.refunded, c)}</b></div>` : ''}${Number(x.points_earned) ? `<div class="ok"><span>Points earned</span><b>+${num(x.points_earned)}</b></div>` : ''}</div>
+     <p class="drFoot">${esc(b.footer || 'Thank you')}${b.tin ? ` · TIN ${esc(b.tin)}` : ''}</p>
+     <div class="actions noPrint drActs"><button class="btn" onclick="window.print()">${icon('printer')}Print / save PDF</button><button class="btn" onclick="copyText(location.href,'Receipt link copied')">${icon('copy')}Copy link</button>${b.slug ? `<button class="btn primary" onclick="goPublic('store',{slug:'${jsq(b.slug)}'})">${icon('store')}Shop online at ${esc(b.name)}</button>` : ''}</div></div>`;
+  }
+};
+
 /* ---------------- public: shops directory ---------------- */
 let shopsQ = '', shopsG = '';
+function stars(v, cls = '') { const n = Math.round(Number(v || 0) * 2) / 2; return `<span class="stars ${cls}" aria-label="${n} out of 5">${[1, 2, 3, 4, 5].map(i => `<i class="${n >= i ? 'on' : n >= i - .5 ? 'half' : ''}">${icon('star')}</i>`).join('')}</span>`; }
+function ratingLine(r, small) { return r && Number(r.count) ? `<span class="ratingLine ${small ? 'sm' : ''}">${stars(r.avg)}<b>${Number(r.avg).toFixed(1)}</b><span class="muted">(${num(r.count)})</span></span>` : ''; }
+function thumbOf(u) { return /\/dq-public\/p\/.+\.jpg(\?.*)?$/.test(String(u || '')) && !/-t\.jpg/.test(u) ? String(u).replace(/\.jpg(\?.*)?$/, '-t.jpg$1') : u; }
+function imgTag(u, alt = '', cls = '', thumb = true) { return `<img class="${cls}" src="${esc(thumb ? thumbOf(u) : u)}" data-f="${esc(u)}" alt="${esc(alt)}" loading="lazy" decoding="async" onload="this.classList.add('ld')" onerror="if(this.dataset.f&&this.src!==this.dataset.f){this.src=this.dataset.f}else{this.classList.add('ld','broken')}">`; }
+function shopLogoHtml(name, logo, cls = '') { return logo ? `<span class="shopLogo img ${cls}">${imgTag(logo, name, '', false)}</span>` : `<span class="shopLogo ${cls}">${esc(String(name || 'S').slice(0, 2).toUpperCase())}</span>`; }
 PAGES.shops = {
-  title: 'Shop online', sub: 'Order from shops near you. Collect at the shop or get it delivered — and earn points every time.',
+  title: 'Shop online', sub: '', noHead: true,
   render: () => {
-    if (!viewParams.list) { sb.rpc('dq_store_directory', { p: { q: shopsQ, group: shopsG } }).then(({ data }) => { viewParams.list = data || []; if (view === 'shops') renderView(); }); return `<div class="card"><div class="empty"><span class="spinner"></span> Finding shops…</div></div>`; }
+    const head = `<div class="dirHero"><h1>Shops near you, on your phone</h1><p>Real stock and prices from local shops. Collect at the shop or get it delivered, and earn points every time.</p>
+      <form class="dirSearch" onsubmit="event.preventDefault();shopsQ=document.getElementById('shQ').value;viewParams.list=null;renderView()"><span>${icon('search')}</span><input id="shQ" value="${esc(shopsQ)}" placeholder="Search shops, products or an area, e.g. rice, Kariakoo" aria-label="Search"><button class="btn primary">Search</button></form>
+      <div class="pillRow"><button class="pill ${!shopsG ? 'active' : ''}" onclick="shopsG='';viewParams.list=null;renderView()">All</button>${REF.groups.map(g => `<button class="pill ${shopsG === g.code ? 'active' : ''}" onclick="shopsG='${g.code}';viewParams.list=null;renderView()">${esc(g.name)}</button>`).join('')}</div></div>`;
+    if (!viewParams.list) { sb.rpc('dq_store_directory', { p: { q: shopsQ, group: shopsG } }).then(({ data }) => { viewParams.list = data || []; if (view === 'shops') renderView(); }); return head + `<div class="shopGrid">${'<div class="skelCard shop skel"></div>'.repeat(3)}</div>`; }
     const l = viewParams.list;
-    return `<div class="card"><div class="toolbar" style="margin:0"><input class="input grow" id="shQ" value="${esc(shopsQ)}" placeholder="Search a shop or area, e.g. Kariakoo" onkeydown="if(event.key==='Enter'){shopsQ=this.value;viewParams.list=null;renderView()}"><button class="btn primary" onclick="shopsQ=document.getElementById('shQ').value;viewParams.list=null;renderView()">${icon('search')}Search</button></div>
-     <div class="pillRow" style="margin:12px 0 0"><button class="pill ${!shopsG ? 'active' : ''}" onclick="shopsG='';viewParams.list=null;renderView()">All</button>${REF.groups.map(g => `<button class="pill ${shopsG === g.code ? 'active' : ''}" onclick="shopsG='${g.code}';viewParams.list=null;renderView()">${esc(g.name)}</button>`).join('')}</div></div>
-     <div class="shopGrid">${l.map(s => `<button class="shopCard" onclick="goPublic('store',{slug:'${jsq(s.slug)}'})">${(s.images || []).length ? `<div class="shopPics">${s.images.slice(0, 3).map(u => `<img src="${esc(u)}" alt="" loading="lazy">`).join('')}</div>` : ''}<div class="shopLogo">${esc((s.name || 'S').slice(0, 2).toUpperCase())}</div><div><b>${esc(s.name)}</b><small>${esc(s.tagline || (s.groups || []).map(groupName).join(' · '))}</small><div class="shopMeta">${s.area ? `<span>${icon('store')}${esc(s.area)}</span>` : ''}<span>${icon('box')}${s.products} products</span>${s.branches > 1 ? `<span>${icon('pin')}${s.branches} branches</span>` : ''}${s.delivery ? `<span>${icon('truck')}Delivery${s.delivery_mode === 'distance' ? ' by distance' : ''}</span>` : ''}${s.pickup ? `<span>${icon('check')}Pickup</span>` : ''}${s.loyalty ? `<span class="ok">${icon('gift')}Points</span>` : ''}</div></div></button>`).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('store', 'No shops found', 'Try another search. Shops appear here when they open their DeepQr online shop.')}</div>`}</div>`;
+    return head + `${shopsQ ? `<p class="muted" style="margin:0 0 10px">${l.length} shop${l.length === 1 ? '' : 's'} for “${esc(shopsQ)}” · <button class="priceBtn" onclick="shopsQ='';viewParams.list=null;renderView()">clear</button></p>` : ''}
+     <div class="shopGrid">${l.map(s => { const cover = s.cover || (s.images || [])[0]; return `<button class="shopCard v6" onclick="goPublic('store',{slug:'${jsq(s.slug)}'})">
+       <div class="shopPics ${cover ? '' : 'none'}">${s.cover ? imgTag(s.cover, '', '', false) : (s.images || []).slice(0, 3).map(u => imgTag(u)).join('')}${Number(s.deals) ? `<i class="dealTag">${s.deals} deal${s.deals > 1 ? 's' : ''}</i>` : ''}</div>
+       <div class="shopBody">${shopLogoHtml(s.name, s.logo)}<div style="min-width:0"><b>${esc(s.name)}</b>${ratingLine(s.rating, true)}<small>${esc(s.tagline || (s.groups || []).map(groupName).join(' · '))}</small></div></div>
+       <div class="shopMeta">${s.area ? `<span>${icon('pin')}${esc(s.area)}</span>` : ''}<span>${icon('box')}${s.products} products</span>${s.branches > 1 ? `<span>${icon('store')}${s.branches} branches</span>` : ''}${s.delivery ? `<span>${icon('truck')}Delivery${s.delivery_mode === 'distance' ? ' by distance' : ''}</span>` : ''}${s.pickup ? `<span>${icon('check')}Pickup</span>` : ''}${s.loyalty ? `<span class="ok">${icon('gift')}Points</span>` : ''}</div></button>`; }).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('store', 'No shops found', 'Try another search. Shops appear here when they open their DeepQr online shop.')}</div>`}</div>`;
   }
 };
 
@@ -93,9 +125,18 @@ function storeBranch() {
 }
 function pStock(p) { const b = storeBranch(); return b ? Number(p.stock_by?.[b.id] || 0) : Number(p.stock || 0); }
 function storeProd(id) { return storeData?.products.find(p => p.id === id); }
-function storeImg(p, cls = '') {
-  return p.image_url ? `<img class="${cls}" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy">`
+function storeImg(p, cls = '', full) {
+  return p.image_url ? imgTag(p.image_url, p.name, cls, !full)
     : `<span class="${cls} noImg" style="--g:${GROUP_TONES[p.group_code] || 'var(--primary-2)'}">${icon('box')}<b>${esc((p.name.split(/\s+/).filter(w => /^[A-Za-z]/.test(w)).slice(0, 2).map(w => w[0]).join('') || p.name.slice(0, 1)).toUpperCase())}</b></span>`;
+}
+function offPct(p) { return p.was && Number(p.was) > Number(p.price) ? Math.round((1 - Number(p.price) / Number(p.was)) * 100) : 0; }
+function prodCardHtml(p, inB, cur2, compact) {
+  const q = inB(p.id), st = pStock(p), out = st <= 0, few = !out && st <= 5, off = offPct(p);
+  return `<div class="prodCard ${out ? 'out' : ''} ${compact ? 'compact' : ''}"><button class="pcImg" onclick="storeSheet('${p.id}')" aria-label="See ${esc(p.name)}">${storeImg(p)}
+     <span class="pcBadges">${off ? `<i class="pcDeal">−${off}%</i>` : ''}${p.featured ? `<i class="pcStar">${icon('star')}Popular</i>` : ''}</span>${out ? '<i class="pcOut">Sold out here</i>' : few ? `<i class="pcFew">Only ${num(st)} left</i>` : ''}</button>
+    <div class="pcBody"><button class="pcName" onclick="storeSheet('${p.id}')">${esc(p.name)}</button><small class="muted">${esc([p.pack_size, p.unit].filter(Boolean).join(' · '))}</small>
+     <div class="pcPriceRow"><b class="pcPrice">${money(p.price, cur2)}</b>${off ? `<s>${money(p.was, cur2)}</s>` : ''}</div>
+     ${out ? (storeData.branches.length > 1 && Object.keys(p.stock_by || {}).length ? `<button class="btn small ghost wide" onclick="storeBranchPicker('${p.id}')">${icon('pin')}Available at another branch</button>` : '') : q ? `<div class="qtyBox"><button onclick="basketAdd('${p.id}',-1)" aria-label="Less">−</button><input value="${q}" readonly aria-label="Quantity"><button onclick="basketAdd('${p.id}',1)" aria-label="More">+</button></div>` : `<button class="btn primary wide pcAdd" onclick="basketAdd('${p.id}',1)">${icon('plus')}Add</button>`}</div></div>`;
 }
 PAGES.store = {
   title: 'Shop', sub: '', noHead: true,
@@ -103,40 +144,66 @@ PAGES.store = {
     const slug = viewParams.slug;
     if (!storeData || storeData.store.slug !== slug) {
       sb.rpc('dq_store_catalog', { p_slug: slug }).then(({ data, error }) => { if (error) { storeData = { error: errMsg(error), store: { slug } }; } else storeData = data; if (view === 'store') renderView(); });
-      return `<div class="card"><div class="empty"><span class="spinner"></span> Opening the shop…</div></div>`;
+      return `<div class="skelCard cover skel"></div><div class="prodCards">${'<div class="skelCard prod skel"></div>'.repeat(6)}</div>`;
     }
     if (storeData.error) return `<div class="card">${emptyState('store', 'This shop is not open online', esc(storeData.error), `<button class="btn primary" onclick="goPublic('shops')">See other shops</button>`)}</div>`;
-    const s = storeData.store, cur2 = s.currency, br = storeBranch();
+    const s = storeData.store, cur2 = s.currency, br = storeBranch(), rt = storeData.rating;
     document.title = s.name + ' · DeepQr';
     let list = storeData.products;
     const cats = [...new Set(list.map(p => p.category || 'Other'))].sort();
     if (storeCat) list = list.filter(p => (p.category || 'Other') === storeCat);
     if (storeQ) { const q = storeQ.toLowerCase(); list = list.filter(p => (p.name + ' ' + (p.brand || '') + ' ' + (p.category || '') + ' ' + (p.description || '')).toLowerCase().includes(q)); }
     list = [...list].sort((a, b) => (pStock(b) > 0) - (pStock(a) > 0));
+    const deals = !storeQ && !storeCat ? storeData.products.filter(p => offPct(p) && pStock(p) > 0) : [];
     const b = basket(slug), inB = id => b.find(x => x.id === id)?.qty || 0;
     const fee = s.delivery ? (s.delivery_mode === 'distance' ? `Delivery from ${money(s.base_fee, cur2)}${Number(s.per_km) ? ` + ${money(s.per_km, cur2)}/km` : ''}` : `Delivery ${Number(s.delivery_fee) ? money(s.delivery_fee, cur2) : 'free'}`) : '';
-    return `<div class="storeHero"><div class="shopLogo lg">${esc(s.name.slice(0, 2).toUpperCase())}</div><div style="flex:1;min-width:0"><h1>${esc(s.name)}</h1>${s.tagline ? `<p>${esc(s.tagline)}</p>` : ''}
+    return `<div class="storeCover ${s.cover ? '' : 'plain'}">${s.cover ? imgTag(s.cover, '', '', false) : ''}</div>
+     <div class="storeHero v6">${shopLogoHtml(s.name, s.logo, 'lg')}<div style="flex:1;min-width:0"><h1>${esc(s.name)}</h1>${s.tagline ? `<p>${esc(s.tagline)}</p>` : ''}
+       ${Number(rt?.count) ? `<button class="priceBtn ratingBtn" onclick="document.getElementById('storeReviews')?.scrollIntoView({behavior:'smooth'})">${ratingLine(rt)} reviews</button>` : ''}
        <div class="shopMeta">${s.area ? `<span>${icon('pin')}${esc(s.area)}</span>` : ''}${s.hours ? `<span>${icon('clock')}${esc(s.hours)}</span>` : ''}${s.pickup ? `<span>${icon('store')}Pickup</span>` : ''}${fee ? `<span>${icon('truck')}${fee}${s.free_delivery_over ? ` · free over ${money(s.free_delivery_over, cur2)}` : ''}</span>` : ''}${Number(s.min_order) ? `<span>Min. order ${money(s.min_order, cur2)}</span>` : ''}</div></div>
        ${s.loyalty ? `<div class="pointsBadge">${icon('gift')}<div><b>${storeData.me ? num(storeData.me.points) + ' points' : 'Earn points'}</b><small>${storeData.me ? 'worth ' + money(storeData.me.points * s.point_value, cur2) : `1 point per ${money(s.points_per_amount, cur2)}${s.first_order_points ? ` · +${s.first_order_points} on your first online order` : ''}`}</small></div></div>` : ''}</div>
      ${br ? `<button class="branchBar" onclick="storeBranchPicker()">${icon('pin')}<span>Shopping at <b>${esc(br.name)}</b>${br.address ? ` · ${esc(br.address)}` : ''}${storeHere && br.lat != null ? ` · ${fmtKm(kmBetween(storeHere, br))} km from you` : ''}</span>${storeData.branches.length > 1 ? `<b class="chg">Change</b>` : ''}</button>` : ''}
-     <div class="storeTools"><input class="input" id="stQ" value="${esc(storeQ)}" placeholder="Search ${storeData.products.length} products…" oninput="storeQ=this.value;const p=this.selectionStart;renderView();const e=document.getElementById('stQ');e.focus();e.setSelectionRange(p,p)">
+     <div class="storeTools"><div class="dirSearch sm"><span>${icon('search')}</span><input id="stQ" value="${esc(storeQ)}" placeholder="Search ${storeData.products.length} products…" aria-label="Search products" oninput="storeQ=this.value;const p=this.selectionStart;renderView();const e=document.getElementById('stQ');e.focus();e.setSelectionRange(p,p)"></div>
       <div class="pillRow"><button class="pill ${!storeCat ? 'active' : ''}" onclick="storeCat='';renderView()">All</button>${cats.map(c => `<button class="pill ${storeCat === c ? 'active' : ''}" onclick="storeCat='${jsq(c)}';renderView()">${esc(c)}</button>`).join('')}</div></div>
-     <div class="prodCards">${list.map(p => { const q = inB(p.id), st = pStock(p), out = st <= 0, few = !out && st <= 5; return `<div class="prodCard ${out ? 'out' : ''}"><button class="pcImg" onclick="storeSheet('${p.id}')" aria-label="See ${esc(p.name)}">${storeImg(p)}${p.featured ? `<i class="pcStar">${icon('star')}Popular</i>` : ''}${out ? '<i class="pcOut">Sold out here</i>' : few ? `<i class="pcFew">Only ${num(st)} left</i>` : ''}</button>
-        <button class="pcName" onclick="storeSheet('${p.id}')">${esc(p.name)}</button><small class="muted">${esc([p.pack_size, p.unit].filter(Boolean).join(' · '))}</small><div class="pcPrice">${money(p.price, cur2)}</div>
-        ${out ? (storeData.branches.length > 1 && Object.keys(p.stock_by || {}).length ? `<button class="btn small ghost wide" onclick="storeBranchPicker('${p.id}')">${icon('pin')}Available at another branch</button>` : '') : q ? `<div class="qtyBox"><button onclick="basketAdd('${p.id}',-1)" aria-label="Less">−</button><input value="${q}" readonly aria-label="Quantity"><button onclick="basketAdd('${p.id}',1)" aria-label="More">+</button></div>` : `<button class="btn primary wide" onclick="basketAdd('${p.id}',1)">${icon('plus')}Add</button>`}</div>`; }).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('search', 'Nothing here', 'Try another search or category.')}</div>`}</div>
+     ${deals.length ? `<section class="dealsRow"><h3>${icon('tag')} Deals</h3><div class="hScroll">${deals.map(p => prodCardHtml(p, inB, cur2, true)).join('')}</div></section>` : ''}
+     <div class="prodCards">${list.map(p => prodCardHtml(p, inB, cur2)).join('') || `<div class="card" style="grid-column:1/-1">${emptyState('search', 'Nothing here', 'Try another search or category.')}</div>`}</div>
+     ${storeAbout(s, rt)}
      ${b.length ? `<button class="basketBar" onclick="openBasket()"><span>${icon('cart')} ${basketCount()} item(s) in your basket</span><b>${money(basketTotal(), cur2)} · Checkout ${icon('arrowRight')}</b></button>` : ''}`;
   }
 };
-function storeSheet(id) {
-  const p = storeProd(id); if (!p) return;
-  const s = storeData.store, st = pStock(p), q = basket().find(x => x.id === id)?.qty || 0, pics = (p.photos || []).length ? p.photos : (p.image_url ? [p.image_url] : []);
-  modal(`<div class="sheetTop"><button class="btn ghost" onclick="closeModal()" aria-label="Close">${icon('x')}</button></div>
-   <div class="sheetPics">${pics.length ? pics.map(u => `<img src="${esc(u)}" alt="${esc(p.name)}">`).join('') : storeImg(p, 'big')}</div>${pics.length > 1 ? `<p class="muted" style="text-align:center;font-size:12px;margin:6px 0 0">Swipe for ${pics.length} photos</p>` : ''}
-   <h2 style="margin:14px 0 2px">${esc(p.name)}</h2><p class="muted" style="margin:0">${esc([p.brand, p.pack_size, p.unit, p.category].filter(Boolean).join(' · '))}</p>
-   <div class="sheetPrice">${money(p.price, s.currency)}<span class="tag ${st > 5 ? 'ok' : st > 0 ? 'warn' : 'gray'}">${st > 5 ? 'In stock' : st > 0 ? `Only ${num(st)} left` : 'Sold out at this branch'}</span></div>
-   ${p.description ? `<p style="white-space:pre-line;margin:10px 0 0">${esc(p.description)}</p>` : ''}
-   <div class="actions" style="margin-top:16px">${st > 0 ? `<button class="btn primary lg wide" onclick="basketAdd('${p.id}',1);storeSheet('${p.id}')">${icon('plus')}${q ? `Add one more (${q} in basket)` : 'Add to basket'}</button>${q ? `<button class="btn lg" onclick="closeModal();openBasket()">${icon('cart')}Checkout</button>` : ''}` : storeData.branches.length > 1 ? `<button class="btn lg wide" onclick="storeBranchPicker('${p.id}')">${icon('pin')}Find a branch that has it</button>` : ''}</div>`, 'sheet');
+function storeAbout(s, rt) {
+  const rv = storeData.reviews || [], st = rt?.stars || {}, max = Math.max(1, ...Object.values(st).map(Number));
+  return `<div class="storeAbout"><section class="card" id="storeReviews"><div class="cardHead"><div><h3>${icon('star')} Reviews</h3><p>From customers whose online order was completed.</p></div></div>
+     ${Number(rt?.count) ? `<div class="rvSummary"><div class="rvBig"><b>${Number(rt.avg).toFixed(1)}</b>${stars(rt.avg)}<small>${num(rt.count)} review${rt.count > 1 ? 's' : ''}</small></div><div class="rvBars">${[5, 4, 3, 2, 1].map(k => `<div><span>${k}</span><i><b style="width:${Number(st[k] || 0) / max * 100}%"></b></i><small>${num(st[k] || 0)}</small></div>`).join('')}</div></div>
+      ${rv.map(r => `<div class="review"><div class="row" style="border:0;padding:0"><span><b>${esc(r.name || 'Customer')}</b> ${stars(r.rating, 'sm')}</span><small class="muted">${fmtD(r.created_at)}</small></div>${r.comment ? `<p>${esc(r.comment)}</p>` : ''}${r.reply ? `<div class="rvReply"><b>${esc(s.name)}</b> ${esc(r.reply)}</div>` : ''}</div>`).join('')}`
+      : `<p class="muted" style="margin:0">No reviews yet. After your order, you can rate the shop from <b>My orders</b>.</p>`}</section>
+    <section class="card"><div class="cardHead"><div><h3>${icon('store')} About ${esc(s.name)}</h3></div></div>
+     ${storeData.branches.map(b => `<div class="row"><span><b>${esc(b.name)}</b><small class="muted" style="display:block">${esc(b.address || '')}${b.phone ? ' · ' + esc(b.phone) : ''}</small></span>${b.lat != null ? `<a class="btn small ghost" target="_blank" rel="noopener" href="${mapsLink(b.lat, b.lng)}">${icon('pin')}Directions</a>` : ''}</div>`).join('')}
+     <dl class="kv" style="margin-top:10px">${s.hours ? `<dt>Open</dt><dd>${esc(s.hours)}</dd>` : ''}${s.phone ? `<dt>Phone</dt><dd><a href="tel:${esc(s.phone)}">${esc(s.phone)}</a></dd>` : ''}<dt>Payment</dt><dd>${esc([...(s.pay_on_collection ? ['Cash at the shop / on delivery'] : []), ...new Set((s.payment_accounts || []).map(a => a.method))].join(', ') || '—')}</dd></dl></section></div>`;
 }
+function storeSheet(id, pic = 0) {
+  const p = storeProd(id); if (!p) return;
+  const s = storeData.store, st = pStock(p), q = basket().find(x => x.id === id)?.qty || 0, pics = (p.photos || []).length ? p.photos : (p.image_url ? [p.image_url] : []), off = offPct(p);
+  modal(`<div class="sheetTop"><button class="btn ghost" onclick="closeModal()" aria-label="Close">${icon('x')}</button></div>
+   <div class="sheetGrid"><div><div class="sheetPics">${pics.length ? `<button class="sheetMain" onclick="photoViewer(${jsq(JSON.stringify(pics)).replace(/"/g, '&quot;')},${pic})" aria-label="Zoom">${imgTag(pics[pic] || pics[0], p.name, '', false)}<i>${icon('search')}</i></button>` : storeImg(p, 'big')}</div>
+    ${pics.length > 1 ? `<div class="sheetThumbs">${pics.map((u, i) => `<button class="${i === pic ? 'on' : ''}" onclick="storeSheet('${p.id}',${i})" aria-label="Photo ${i + 1}">${imgTag(u)}</button>`).join('')}</div>` : ''}</div>
+   <div><h2 style="margin:4px 0 2px">${esc(p.name)}</h2><p class="muted" style="margin:0">${esc([p.brand, p.pack_size, p.unit, p.category].filter(Boolean).join(' · '))}</p>
+   <div class="sheetPrice">${money(p.price, s.currency)}${off ? `<s>${money(p.was, s.currency)}</s><i class="pcDeal">−${off}%</i>` : ''}</div>
+   <div class="sheetFacts"><span class="tag ${st > 5 ? 'ok' : st > 0 ? 'warn' : 'gray'}">${st > 5 ? 'In stock' : st > 0 ? `Only ${num(st)} left` : 'Sold out at this branch'}</span>${Number(p.sold_30d) ? `<span>${icon('chart')} ${num(p.sold_30d)} sold online this month</span>` : ''}<span>${icon('shield')} Genuine DeepQr product</span></div>
+   ${p.description ? `<p style="white-space:pre-line;margin:12px 0 0">${esc(p.description)}</p>` : ''}
+   <div class="actions" style="margin-top:16px">${st > 0 ? `<button class="btn primary lg wide" onclick="basketAdd('${p.id}',1);storeSheet('${p.id}',${pic})">${icon('plus')}${q ? `Add one more (${q} in basket)` : 'Add to basket'}</button>${q ? `<button class="btn lg" onclick="closeModal();openBasket()">${icon('cart')}Checkout</button>` : ''}` : storeData.branches.length > 1 ? `<button class="btn lg wide" onclick="storeBranchPicker('${p.id}')">${icon('pin')}Find a branch that has it</button>` : ''}</div></div></div>`, 'sheet');
+}
+function photoViewer(pics, i = 0) {
+  if (typeof pics === 'string') pics = JSON.parse(pics);
+  let el = document.getElementById('viewer'); if (!el) { el = document.createElement('div'); el.id = 'viewer'; document.body.appendChild(el); }
+  const draw = () => { el.innerHTML = `<div class="viewer" role="dialog" aria-label="Photo"><button class="vClose" onclick="document.getElementById('viewer').remove()" aria-label="Close">${icon('x')}</button>
+    ${pics.length > 1 ? `<button class="vNav l" aria-label="Previous">‹</button><button class="vNav r" aria-label="Next">›</button>` : ''}<div class="vImg"><img src="${esc(pics[i])}" alt=""></div>${pics.length > 1 ? `<div class="vDots">${pics.map((_, j) => `<i class="${j === i ? 'on' : ''}"></i>`).join('')}</div>` : ''}</div>`;
+    el.querySelector('.vNav.l')?.addEventListener('click', () => { i = (i - 1 + pics.length) % pics.length; draw(); });
+    el.querySelector('.vNav.r')?.addEventListener('click', () => { i = (i + 1) % pics.length; draw(); });
+    el.querySelector('.vImg img').addEventListener('click', e => e.currentTarget.classList.toggle('zoom')); };
+  draw();
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.getElementById('viewer')?.remove(); });
 function storeBranchPicker(pid) {
   const p = pid ? storeProd(pid) : null, cur3 = storeBranch();
   const rows = [...storeData.branches].map(b => ({ b, km: storeHere ? kmBetween(storeHere, b) : null })).sort((x, y) => (x.km ?? 1e9) - (y.km ?? 1e9));
@@ -308,19 +375,37 @@ PAGES.c_home = {
     const totalPts = sum(d.loyalty, 'points');
     return `${viewParams.placed ? `<div class="banner ok">${icon('check')}<div><b>Order ${esc(viewParams.placed)} sent!</b><p>The shop will confirm it shortly. This page updates by itself.</p></div></div>` : ''}
      <div class="grid g3">${kpi('cart', 'Orders', d.orders.length, `${d.orders.filter(o => !['completed', 'cancelled', 'rejected'].includes(o.status)).length} in progress`)}${kpi('gift', 'Points', num(totalPts), `at ${d.loyalty.length} shop(s)`, 'teal')}${kpi('store', 'Shops', d.loyalty.length, 'where you shop')}</div>
-     <div style="margin-top:16px">${tabbar('chTabs', [['orders', 'Orders', 'cart'], ['points', 'Points & rewards', 'gift'], ['profile', 'Profile', 'user']], tab, 'chTab')}</div>
-     ${tab === 'points' ? cPoints(d) : tab === 'profile' ? cProfile(d) : cOrders(d)}`;
+     <div style="margin-top:16px">${tabbar('chTabs', [['orders', 'Orders', 'cart'], ['points', 'Points & rewards', 'gift'], ['receipts', 'Receipts', 'receipt', (d.receipts || []).length || ''], ['profile', 'Profile', 'user']], tab, 'chTab')}</div>
+     ${tab === 'points' ? cPoints(d) : tab === 'profile' ? cProfile(d) : tab === 'receipts' ? cReceipts(d) : cOrders(d)}`;
   }
 };
 function chTab(t) { setTab('tab', t); }
 function cOrders(d) {
   return d.orders.map(o => { const steps = OO_STEPS[o.fulfilment], at = steps.indexOf(o.status), stopped = ['cancelled', 'rejected'].includes(o.status), pay = PAY_LABEL[o.payment_status] || [o.payment_status, 'gray'];
-    return `<div class="card orderCard"><div class="cardHead" style="margin-bottom:8px"><div><h3>${esc(o.business_name)} <span class="mono muted" style="font-size:12px">${esc(o.order_no)}</span></h3><p>${fmtDT(o.created_at)} · ${o.fulfilment === 'delivery' ? 'Delivery to ' + esc(o.delivery_address || '') : 'Collect at the shop'}</p></div><div style="text-align:right"><b>${money(o.total, o.currency)}</b><br><span class="tag ${pay[1]}">${pay[0]}</span></div></div>
+    return `<div class="card orderCard"><div class="cardHead" style="margin-bottom:8px"><div class="ocHead">${shopLogoHtml(o.business_name, o.business_logo, 'sm')}<div><h3>${esc(o.business_name)} <span class="mono muted" style="font-size:12px">${esc(o.order_no)}</span></h3><p>${fmtDT(o.created_at)} · ${o.fulfilment === 'delivery' ? 'Delivery to ' + esc(o.delivery_address || '') : 'Collect at ' + esc(o.branch_name || 'the shop')}</p></div></div><div style="text-align:right"><b>${money(o.total, o.currency)}</b><br><span class="tag ${pay[1]}">${pay[0]}</span></div></div>
       ${stopped ? `<div class="banner bad">${icon('x')}<div><b>${OO_LABEL[o.status]}</b><p>${esc(o.staff_note || '')}</p></div></div>` : `<div class="track">${steps.map((s, i) => `<div class="${i < at ? 'done' : i === at ? 'now' : ''}"><i></i><span>${OO_LABEL[s]}</span></div>`).join('')}</div>`}
       ${o.payment_status === 'rejected' ? `<div class="banner warn">${icon('alert')}<div><b>The shop could not find your payment</b><p>${esc((o.timeline || []).filter(t => t.status === 'payment_rejected').pop()?.note || '')} Call the shop${o.business_phone ? ' on ' + esc(o.business_phone) : ''}.</p></div></div>` : ''}
       ${o.staff_note && !stopped ? `<p class="muted" style="margin:8px 0 0">${icon('info')} ${esc(o.staff_note)}</p>` : ''}
+      <div class="ocThumbs">${(o.items || []).slice(0, 6).map(i => i.image ? imgTag(i.image, i.name) : `<span class="noImg sm">${esc(String(i.name || '?').slice(0, 1))}</span>`).join('')}</div>
       <details style="margin-top:10px"><summary class="muted">${(o.items || []).length} product(s)</summary>${(o.items || []).map(i => `<div class="row" style="padding:5px 0"><span>${esc(i.name)} × ${num(i.qty)}</span><span>${money(i.qty * i.price, o.currency)}</span></div>`).join('')}${Number(o.delivery_fee) ? `<div class="row" style="padding:5px 0"><span>Delivery</span><span>${money(o.delivery_fee, o.currency)}</span></div>` : ''}${Number(o.points_value) ? `<div class="row ok" style="padding:5px 0"><span>${o.points_redeem} points</span><span>− ${money(o.points_value, o.currency)}</span></div>` : ''}</details>
-      <div class="actions" style="margin-top:10px">${o.status === 'completed' && o.points_earned ? `<span class="tag ok">${icon('gift')} +${o.points_earned} points earned</span>` : ''}${['placed', 'accepted'].includes(o.status) ? `<button class="btn small ghost" onclick="cCancel('${o.id}')">Cancel order</button>` : ''}${o.slug ? `<button class="btn small" onclick="goPublic('store',{slug:'${jsq(o.slug)}'})">${icon('cart')}Order again</button>` : ''}${o.business_phone ? `<a class="btn small" href="tel:${esc(o.business_phone)}">${icon('phone')}Call shop</a>` : ''}</div></div>`; }).join('') || `<div class="card">${emptyState('cart', 'No orders yet', 'Find a shop and place your first order.', `<button class="btn primary" onclick="goPublic('shops')">${icon('store')}Browse shops</button>`)}</div>`;
+      ${o.review ? `<div class="myReview">${stars(o.review.rating, 'sm')} ${o.review.comment ? `“${esc(o.review.comment)}”` : ''}${o.review.reply ? `<div class="rvReply"><b>${esc(o.business_name)}</b> ${esc(o.review.reply)}</div>` : ''}</div>` : ''}
+      <div class="actions" style="margin-top:10px">${o.status === 'completed' && o.points_earned ? `<span class="tag ok">${icon('gift')} +${o.points_earned} points earned</span>` : ''}${o.status === 'completed' ? `<button class="btn small ${o.review ? 'ghost' : 'primary'}" onclick="cRate('${o.id}')">${icon('star')}${o.review ? 'Edit review' : 'Rate the shop'}</button>` : ''}${o.receipt_ref ? `<button class="btn small" onclick="goPublic('receipt',{ref:'${o.receipt_ref}'})">${icon('receipt')}Receipt</button>` : ''}${['placed', 'accepted'].includes(o.status) ? `<button class="btn small ghost" onclick="cCancel('${o.id}')">Cancel order</button>` : ''}${o.slug ? `<button class="btn small" onclick="goPublic('store',{slug:'${jsq(o.slug)}'})">${icon('cart')}Order again</button>` : ''}${o.business_phone ? `<a class="btn small" href="tel:${esc(o.business_phone)}">${icon('phone')}Call shop</a>` : ''}</div></div>`; }).join('') || `<div class="card">${emptyState('cart', 'No orders yet', 'Find a shop and place your first order.', `<button class="btn primary" onclick="goPublic('shops')">${icon('store')}Browse shops</button>`)}</div>`;
+}
+function cReceipts(d) {
+  return `<div class="card">${(d.receipts || []).map(r => `<button class="row clickRow rcRow" onclick="goPublic('receipt',{ref:'${r.ref}'})">${shopLogoHtml(r.business, r.logo, 'sm')}<span style="flex:1;text-align:left"><b>${esc(r.business)}</b><small class="muted" style="display:block">${esc(r.receipt)} · ${fmtD(r.date)}</small></span><b>${money(r.total, r.currency)}</b></button>`).join('') || emptyState('receipt', 'No receipts yet', 'When a shop sells to you with your phone number, the receipt appears here.')}</div>`;
+}
+let rateVal = 0;
+function cRate(id) {
+  const o = cHomeData.orders.find(x => x.id === id); rateVal = o?.review?.rating || 0;
+  const draw = () => modal(`<div class="cardHead"><div><h3>${icon('star')} Rate ${esc(o.business_name)}</h3><p>Your review helps other shoppers. Only your first name is shown.</p></div><button class="btn ghost" onclick="closeModal()">${icon('x')}</button></div>
+   <div class="rateRow">${[1, 2, 3, 4, 5].map(i => `<button class="${rateVal >= i ? 'on' : ''}" onclick="rateVal=${i};document.querySelectorAll('.rateRow button').forEach((b,j)=>b.classList.toggle('on',j<${i}));document.getElementById('rateTxt').textContent=['','Poor','Fair','Good','Very good','Excellent'][${i}]" aria-label="${i} star${i > 1 ? 's' : ''}">${icon('star')}</button>`).join('')}<span id="rateTxt" class="muted">${['Tap a star', 'Poor', 'Fair', 'Good', 'Very good', 'Excellent'][rateVal]}</span></div>
+   <div class="field" style="margin-top:12px"><label for="rateC">What was good, what could be better? (optional)</label><textarea id="rateC" rows="3" maxlength="600">${esc(o.review?.comment || '')}</textarea></div>
+   <div id="rateErr" class="bad" style="min-height:20px"></div><div class="actions"><button class="btn primary" id="rateSave" onclick="cRateSave('${id}',this)">${icon('check')}Send review</button></div>`, 'narrow');
+  draw();
+}
+async function cRateSave(id, btn) {
+  if (!rateVal) { document.getElementById('rateErr').textContent = 'Tap 1 to 5 stars.'; return; }
+  await withBusy(btn, async () => { const r = await rpcToast('dq_review_order', { p: { order_id: id, rating: rateVal, comment: document.getElementById('rateC').value } }, 'Thank you for your review'); if (r) { closeModal(); viewParams.reload = 1; renderView(); } });
 }
 function cCancel(id) { askBox('Cancel this order?', 'The shop will be told straight away.', { label: 'Reason (optional)' }, 'Cancel order', async (v, b) => { await withBusy(b, async () => { const r = await rpcToast('dq_customer_cancel_order', { p_id: id, p_reason: v }, 'Order cancelled'); if (r) { closeModal(); viewParams.reload = 1; renderView(); } }); }); }
 function cPoints(d) {

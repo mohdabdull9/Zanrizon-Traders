@@ -104,6 +104,8 @@ async function withBusy(btn, fn) {
 
 /* ---------------- icons ---------------- */
 const ICONS = {
+  cloud: '<path d="M7 18a5 5 0 0 1-.9-9.9A6 6 0 0 1 17.7 9 4.5 4.5 0 0 1 17.5 18z"/>',
+  cloudOff: '<path d="M7 18a5 5 0 0 1-.9-9.9 6 6 0 0 1 2.3-3.1M12 3.4A6 6 0 0 1 17.7 9a4.5 4.5 0 0 1 2.7 7.5M3 3l18 18"/>',
   pin: '<path d="M12 21s-7-6.2-7-12a7 7 0 0 1 14 0c0 5.8-7 12-7 12z"/><circle cx="12" cy="9" r="2.5"/>',
   star: '<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
@@ -261,7 +263,7 @@ async function loadAllData() {
   stockRows.forEach(r => { const p = cache.products.find(x => x.id === r.product_id); if (p) { cache.stock[r.shop_id] = cache.stock[r.shop_id] || {}; cache.stock[r.shop_id][p.code] = Number(r.qty); } });
   myShift = cache.shifts.find(s => s.status === 'open' && s.member_id === me.id) || null;
   if (typeof repKey !== 'undefined') repKey = '';
-  cache.online = null; cache.onlineItems = []; if (typeof insights !== 'undefined') insights = null;
+  cache.online = null; cache.onlineItems = []; cache.reviews = null; if (typeof insights !== 'undefined') insights = null;
   await loadDeepQr();
 }
 async function loadDeepQr() {
@@ -287,20 +289,27 @@ async function reloadAndRender(msg) { await loadAllData(); renderView(); if (msg
 
 /* ---------------- boot / auth ---------------- */
 async function boot() {
+  registerSW();
   try {
-    const { data: { session: s } } = await sb.auth.getSession();
+    let s = null;
+    try { s = (await sb.auth.getSession()).data.session; } catch (e) { s = null; }
     session = s;
+    if (!navigator.onLine && (session || storedUserId()) && await offlineBoot()) return;
     await loadRef();
     const pr = readPublicRoute(); if (pr) { pub = pr; view = pr.view; viewParams = pr.params; }
     const inv = new URLSearchParams(location.search).get('supplier_invite'); if (inv && !session) { authMode = 'supplier'; window.__supInvite = inv.toUpperCase(); }
-    if (session) await loadMember(); else render();
+    if (session) { try { await loadMember(); } catch (e) { if (netDown(e) && await offlineBoot()) return; throw e; } }
+    else if (storedUserId() && !navigator.onLine && await offlineBoot()) return;
+    else render();
   } catch (e) {
+    if (netDown(e) && await offlineBoot()) return;
     document.getElementById('root').innerHTML = `<div class="lockScreen"><div class="bigIco">${icon('alert')}</div><h2>Can't reach DeepQr</h2><p class="muted">${esc(errMsg(e))}</p><button class="btn primary" onclick="location.reload()">Try again</button></div>`;
   }
 }
 async function loadMember() {
   const v = await sb.rpc('dq_version');
-  dbReady = !v.error && Number(v.data) >= 5;
+  if (v.error && netDown(v.error)) throw v.error;
+  dbReady = !v.error && Number(v.data) >= 6;
   if (!dbReady) { me = null; view = 'needsUpdate'; render(); return; }
   const who = await rpc('dq_whoami') || {};
   isAdmin = !!who.admin; adminRole = who.admin?.role || null;
@@ -323,6 +332,7 @@ async function loadMember() {
   const { data: b } = await sb.from('businesses').select('*').eq('id', m.business_id).single();
   business = b;
   await loadAllData();
+  isOffline = false; offlineAfterLoad();
   sb.from('members').update({ last_seen: new Date().toISOString() }).eq('id', me.id).then(() => {});
   onlineWatch();
   if (pub) { render(); return; }
@@ -397,7 +407,9 @@ async function adminClaimSubmit(e) {
     await loadMember();
   } finally { busy = false; }
 }
-async function logout() { if (window.Scanner) Scanner.stopCamera(); await sb.auth.signOut(); session = null; me = null; business = null; isAdmin = false; adminData = null; supplierAcc = null; customerAcc = null; adminRole = null; supData = null; cHomeData = null; clearInterval(ooTimer);
+async function logout(force) {
+  if (!force && typeof outboxN !== 'undefined' && outboxN > 0) { confirmBox(`${outboxN} offline sale${outboxN > 1 ? 's are' : ' is'} not uploaded yet`, 'If you sign out now they stay on this device and upload the next time you sign in here. Connect to the internet first if you can.', 'Sign out anyway', () => { closeModal(); logout(true); }, 'danger'); return; }
+  if (window.Scanner) Scanner.stopCamera(); await sb.auth.signOut(); session = null; me = null; business = null; isAdmin = false; adminData = null; supplierAcc = null; customerAcc = null; adminRole = null; supData = null; cHomeData = null; clearInterval(ooTimer);
   if (pub && pub.view !== 'c_home') { render(); return; } pub = null; try { history.replaceState(null, '', location.pathname); } catch (e) {} if (window.posState) posState.cart = []; view = 'login'; authMode = 'login'; location.hash = ''; render(); }
 async function toggleTheme() {
   const next = (document.documentElement.getAttribute('data-theme') || 'light') === 'dark' ? 'light' : 'dark';
@@ -416,7 +428,7 @@ function render() {
   root.innerHTML = layout(); applySidebarState(); renderView();
 }
 function needsUpdateHtml() {
-  return `<div class="lockScreen" style="padding-top:12vh">${logoMark(54)}<h2>DeepQr needs a database update</h2><p class="muted">This version of DeepQr needs the latest database update. The DeepQr admin should run <span class="mono">supabase/migrations/20261014120000_deepqr_v5.sql</span> (after the v2, v3 and v4 files) in the Supabase SQL Editor, then reload this page.</p><div class="actions" style="justify-content:center"><button class="btn primary" onclick="location.reload()">Reload</button><button class="btn" onclick="logout()">Sign out</button></div></div>`;
+  return `<div class="lockScreen" style="padding-top:12vh">${logoMark(54)}<h2>DeepQr needs a database update</h2><p class="muted">This version of DeepQr needs the latest database update. The DeepQr admin should run <span class="mono">supabase/migrations/20261016120000_deepqr_v6.sql</span> (after the v2–v5 files) in the Supabase SQL Editor, then reload this page.</p><div class="actions" style="justify-content:center"><button class="btn primary" onclick="location.reload()">Reload</button><button class="btn" onclick="logout()">Sign out</button></div></div>`;
 }
 function blockedHtml() {
   const st = window.__blocked || {};
@@ -616,17 +628,17 @@ function navBadge(k) {
 }
 function layout() {
   const dark = document.documentElement.getAttribute('data-theme') === 'dark';
-  const bizCard = me ? `<div class="sideBiz"><b>${esc(business.name)}</b><small>${esc(roleName(me.role))}${me.shop_id ? ' · ' + esc(shopObj(me.shop_id)?.name || '') : ''}</small><br><span class="code">ID ${esc(business.code || '—')}</span></div>`
+  const bizCard = me ? `<div class="sideBiz">${business.logo_url ? `<img class="sideLogo" src="${esc(business.logo_url)}" alt="">` : ''}<b>${esc(business.name)}</b><small>${esc(roleName(me.role))}${me.shop_id ? ' · ' + esc(shopObj(me.shop_id)?.name || '') : ''}</small><br><span class="code">ID ${esc(business.code || '—')}</span></div>`
     : supplierAcc ? `<div class="sideBiz"><b>${esc(supplierAcc.company_name)}</b><small>Supplier${supplierAcc.verified ? ' · ✔ verified' : ''}</small><br><span class="code">${esc(supplierAcc.code || '')}</span></div>`
     : `<div class="sideBiz"><b>DeepQr Platform</b><small>${esc({ owner: 'Platform owner', admin: 'Administrator', finance: 'Finance', support: 'Support', catalog: 'Catalogue' }[adminRole] || 'Team')}</small></div>`;
   const lowBal = me && wallet && Number(wallet.balance || 0) + Number(wallet.bonus_balance || 0) < Number(wallet.low_balance_threshold || 500);
   return `<div class="app"><div class="sideOverlay" id="sideOverlay" onclick="closeMobileSidebar()"></div>
   <aside class="side"><div class="sideBrand">${logoMark(36)}${wordmark()}</div>${bizCard}
    <nav class="nav">${navGroups().map(([gname, items]) => `<div class="navSec">${gname}</div>` + items.map(x => `<button class="${view === x[0] || (view === 'portal' && x[0] === 'portal:' + (viewParams.tab || 'overview')) ? 'active' : ''}" onclick="go('${x[0]}');closeMobileSidebar()" title="${esc(x[1])}">${icon(x[2])}<span>${x[1]}</span>${x[3] ? `<span class="badge ${x[0] === 'sup_payments' ? 'teal' : ''}">${x[3]}</span>` : navBadge(x[0])}</button>`).join('')).join('')}</nav>
-   <div class="sideFoot nav"><button onclick="logout()">${icon('logout')}<span>Sign out</span></button></div></aside>
+   <div class="sideFoot nav"><button id="installBtn" ${typeof installEvt !== 'undefined' && installEvt ? '' : 'hidden'} onclick="installApp()">${icon('download')}<span>Install the app</span></button><button onclick="logout()">${icon('logout')}<span>Sign out</span></button></div></aside>
   <main class="main"><header class="top"><button class="iconBtn" onclick="toggleSidebar()" title="Menu" aria-label="Menu">${icon('menu')}</button>
    ${me ? `<div class="topSearch">${icon('search')}<input id="globalSearch" value="${esc(search)}" oninput="globalSearch(this.value)" placeholder="Search products, serials, receipts, customers…" aria-label="Search"></div>` : ''}
-   <div class="topRight">
+   <div class="topRight"><span id="netChip">${typeof netChipHtml === 'function' ? netChipHtml() : ''}</span>
     ${me && myShift ? `<button class="shiftChip hideSm" onclick="go('pos')" title="Your till shift"><span class="dot"></span>Shift open</button>` : ''}
     ${me && wallet && isMgr() ? `<button class="chip ${lowBal ? 'warn' : 'teal'} hideSm" onclick="go('wallet')" title="QR wallet">${icon('wallet')}${money(Number(wallet.balance || 0) + Number(wallet.bonus_balance || 0), wallet.currency)}</button>` : ''}
     ${me && wallet?.status === 'suspended' ? `<span class="chip bad">Suspended</span>` : ''}
@@ -647,6 +659,7 @@ function applySidebarState() {
 }
 function closeMobileSidebar() { if (window.innerWidth <= 900) { mobileSidebarOpen = false; applySidebarState(); } }
 function go(v, params = {}) {
+  if (typeof isOffline !== 'undefined' && isOffline && me && !['pos'].includes(v)) { toast('Offline: only Scan & Sell works now. This opens when the internet is back.', 'bad'); return; }
   if (v.startsWith('portal:')) { params = { ...params, tab: v.slice(7) }; v = 'portal'; }
   if (PUBLIC_VIEWS.includes(v)) { goPublic(v, params); return; }
   if (pub) { pub = null; try { history.replaceState(null, '', location.pathname + '#' + v); } catch (e) {} }
